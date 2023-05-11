@@ -7,21 +7,21 @@ DELETE FROM [dbo].[AccountTypeXBusinessRuleMonetaryAmount]
 DELETE FROM [dbo].[AccountTypeXBusinessRuleOperation]
 DELETE FROM [dbo].[AccountTypeXBusinessRuleRate]
 DELETE FROM [dbo].[AccountTypeXBussinesRule]
-DBCC CHECKIDENT ('AccountTypeXBussinesRule', RESEED, 1)
+DBCC CHECKIDENT ('AccountTypeXBussinesRule', RESEED, 0)
 DELETE FROM [dbo].[AccountType]
-DBCC CHECKIDENT ('AccountType', RESEED, 1)
+DBCC CHECKIDENT ('AccountType', RESEED, 0)
 DELETE FROM [dbo].[BusinessRule]
-DBCC CHECKIDENT ('BusinessRule', RESEED, 1)
+DBCC CHECKIDENT ('BusinessRule', RESEED, 0)
 DELETE FROM [dbo].BusinessRuleType
-DBCC CHECKIDENT ('BusinessRuleType', RESEED, 1)
+DBCC CHECKIDENT ('BusinessRuleType', RESEED, 0)
 DELETE FROM [dbo].DocumentType
-DBCC CHECKIDENT ('DocumentType', RESEED, 1)
+DBCC CHECKIDENT ('DocumentType', RESEED, 0)
 DELETE FROM dbo.InvalidationMotive
-DBCC CHECKIDENT ('InvalidationMotive', RESEED, 1)
+DBCC CHECKIDENT ('InvalidationMotive', RESEED, 0)
 DELETE FROM dbo.MovementType
-DBCC CHECKIDENT ('MovementType', RESEED, 1)
+DBCC CHECKIDENT ('MovementType', RESEED, 0)
 DELETE FROM dbo.[User]
-DBCC CHECKIDENT ('User', RESEED, 1)
+DBCC CHECKIDENT ('User', RESEED, 0)
 
 
 GO

@@ -53,21 +53,22 @@ SELECT
 	T.Item.value('@Nombre', 'VARCHAR(64)')
 FROM @xmlData.nodes('root/TRN/TRN') AS T(Item)
 
--- Insert business rules from loaded xml data
+-- Insert business rules values from loaded xml data
 -- Creating a temporary table to quickly store input data
 DECLARE @TempBusinessRule TABLE (
 	Id INT IDENTITY(1,1)
 	, [Name] VARCHAR(64)
 	, [AccountTypeName] VARCHAR(16)
 	, [BusinessRuleTypeName] VARCHAR(32)
-	, [Value] FLOAT
+	, [BusinessRuleValue] FLOAT
 )
+
 -- Inserting data into temporary table
 INSERT INTO @TempBusinessRule (
 	[Name]
 	, [AccountTypeName]
 	, [BusinessRuleTypeName]
-	, [Value]
+	, [BusinessRuleValue]
 )
 SELECT
 	T.Item.value('@Nombre', 'VARCHAR(64)')
@@ -76,100 +77,120 @@ SELECT
 	, T.Item.value('@Valor', 'FLOAT')
 FROM @xmlData.nodes('root/RN/RN') AS T(Item)
 
--- Inserting into Business Rule
-INSERT INTO dbo.BusinessRule (
-	IdBusinessRuleType
-	,[Name]
-)
-SELECT
-	BRT.Id
-	, TBR.[Name]
-FROM @TempBusinessRule TBR
-INNER JOIN dbo.BusinessRuleType BRT
-ON TBR.BusinessRuleTypeName = BRT.[Name]
+-- Variables to loop through the temp table
+DECLARE
+	@lo INT = 1 -- Firt record
+	, @hi INT	-- Last record
+	, @BusinessRuleName VARCHAR(64)
+	, @AccountTypeName VARCHAR(16)
+	, @BusinessRuleTypeName VARCHAR(32)
+	, @BusinessRuleValue FLOAT
+	, @BusinessRuleLastId	INT -- Save last BusinessRule table id
+	, @AccountTypeXBusinessRuleLastId INT	-- Save last table id
+	, @AccountTypeId INT
+	, @BusinessRuleTypeId INT
+	;
 
-INSERT INTO dbo.AccountTypeXBussinesRule (
-	[IdAccountType]
-	, [IdBusinessRule]
-)
+-- Set stop
 SELECT
-	[AT].Id
-	, BR.Id
-FROM dbo.BusinessRule BR
-INNER JOIN @TempBusinessRule TBR
-ON BR.[Name] = TBR.[Name]
-INNER JOIN dbo.AccountType [AT]
-ON [AT].[Name] = TBR.AccountTypeName
-	
--- Inserting Account Type x Business Rule Days
-INSERT INTO dbo.AccountTypeXBusinessRuleDays (
-	IdAccountTypeXBusinessRule
-	, QDays
-)
-SELECT
-	AXR.Id
-	, TBR.[Value]
-FROM dbo.AccountTypeXBussinesRule AXR
-INNER JOIN dbo.BusinessRule BR
-ON BR.Id = AXR.IdBusinessRule
-INNER JOIN @TempBusinessRule TBR
-ON TBR.[Name] = BR.[Name]
+	@hi = MAX(TBR.Id)
+FROM @TempBusinessRule TBR;
 
--- Inserting Account Type x Business Rule Months
-INSERT INTO dbo.AccountTypeXBusinessRuleMonths(
-	IdAccountTypeXBusinessRule
-	, QMonths
-)
-SELECT
-	AXR.Id
-	, TBR.[Value]
-FROM dbo.AccountTypeXBussinesRule AXR
-INNER JOIN dbo.BusinessRule BR
-ON BR.Id = AXR.IdBusinessRule
-INNER JOIN @TempBusinessRule TBR
-ON TBR.[Name] = BR.[Name]
+WHILE (@lo <= @hi)
+BEGIN
+	-- Get table record
+	SELECT
+		@BusinessRuleName = TBR.[Name]
+		, @AccountTypeName = TBR.[AccountTypeName]
+		, @BusinessRuleTypeName = TBR.[BusinessRuleTypeName]
+		, @BusinessRuleValue = TBR.[BusinessRuleValue]
+	FROM @TempBusinessRule TBR
+	WHERE TBR.Id=@lo;
 
--- Inserting Account Type x Business Rule Monetary
-INSERT INTO dbo.AccountTypeXBusinessRuleMonetaryAmount(
-	IdAccountTypeXBusinessRule
-	, Amount
-)
-SELECT
-	AXR.Id
-	, TBR.[Value]
-FROM dbo.AccountTypeXBussinesRule AXR
-INNER JOIN dbo.BusinessRule BR
-ON BR.Id = AXR.IdBusinessRule
-INNER JOIN @TempBusinessRule TBR
-ON TBR.[Name] = BR.[Name]
+	-- Obtain BusinessRuleType id
+	SELECT
+		@BusinessRuleTypeId = Id
+	FROM dbo.BusinessRuleType BRT
+	WHERE BRT.[Name] = @BusinessRuleTypeName
 
--- Inserting Account Type x Business Rule operation
-INSERT INTO dbo.AccountTypeXBusinessRuleOperation (
-	IdAccountTypeXBusinessRule
-	, QOperations
-)
-SELECT
-	AXR.Id
-	, TBR.[Value]
-FROM dbo.AccountTypeXBussinesRule AXR
-INNER JOIN dbo.BusinessRule BR
-ON BR.Id = AXR.IdBusinessRule
-INNER JOIN @TempBusinessRule TBR
-ON TBR.[Name] = BR.[Name]
+	-- Inserting into bussines rule table 
+	INSERT INTO dbo.BusinessRule (
+		IdBusinessRuleType
+		, [Name]
+	)
+	VALUES (
+		@BusinessRuleTypeId
+		, @BusinessRuleName
+	)
 
--- Inserting Account Type x Business Rule Days
-INSERT INTO dbo.AccountTypeXBusinessRuleRate (
-	IdAccountTypeXBusinessRule
-	, Rate
-)
-SELECT
-	AXR.Id
-	, TBR.[Value]
-FROM dbo.AccountTypeXBussinesRule AXR
-INNER JOIN dbo.BusinessRule BR
-ON BR.Id = AXR.IdBusinessRule
-INNER JOIN @TempBusinessRule TBR
-ON TBR.[Name] = BR.[Name]
+	SET @BusinessRuleLastId = SCOPE_IDENTITY();	-- Catch last BussinesRule table id
+
+	-- Obtain Account Type Id
+	SELECT
+		@AccountTypeId = A.Id
+	FROM dbo.AccountType A
+	WHERE A.[Name] = @AccountTypeName;
+
+	-- Inserting into AccountTypeXBusinessRule Table
+	INSERT INTO dbo.AccountTypeXBussinesRule (
+		IdAccountType
+		, IdBusinessRule
+		)
+	VALUES (
+		@AccountTypeId
+		, @BusinessRuleLastId
+	)
+
+	SET @AccountTypeXBusinessRuleLastId = SCOPE_IDENTITY(); -- Catch last AccountTypeXBusinessRule id
+
+	-- Insert Business rules values
+	IF (@BusinessRuleTypeName = 'Monto Monetario') -- Monetary amount
+	BEGIN
+		INSERT INTO dbo.AccountTypeXBusinessRuleMonetaryAmount (
+			IdAccountTypeXBusinessRule
+			, Amount
+		)
+		VALUES (
+			@AccountTypeXBusinessRuleLastId
+			, @BusinessRuleValue
+		)
+	END
+	ELSE IF (@BusinessRuleTypeName = 'Porcentaje')
+	BEGIN
+		INSERT INTO dbo.AccountTypeXBusinessRuleRate (
+			IdAccountTypeXBusinessRule
+			, Rate
+		)
+		VALUES (
+			@AccountTypeXBusinessRuleLastId
+			, @BusinessRuleValue
+		)
+	END
+	ELSE IF (@BusinessRuleTypeName = 'Cantidad de Operaciones')
+	BEGIN
+		INSERT INTO dbo.AccountTypeXBusinessRuleOperation (
+			IdAccountTypeXBusinessRule
+			, QOperations
+		)
+		VALUES (
+			@AccountTypeXBusinessRuleLastId
+			, @BusinessRuleValue
+		)
+	END
+	ELSE	IF (@BusinessRuleTypeName = 'Cantidad de Dias')
+	BEGIN
+		INSERT INTO dbo.AccountTypeXBusinessRuleDays (
+			IdAccountTypeXBusinessRule
+			, QDays
+		)
+		VALUES (
+			@AccountTypeXBusinessRuleLastId
+			, @BusinessRuleValue
+		)
+	END
+
+	SET @lo = @lo + 1;
+END
 
 -- Insert movement types from loaded xml data
 -- Creating a temporary movement types table
