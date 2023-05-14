@@ -20,8 +20,14 @@ DECLARE @InputCardHolder TABLE (
 		, [IdentificationValue] VARCHAR(16)
 		, [UserName] VARCHAR(16)
 		, [Password] VARCHAR(16)
-	)
-	;
+	);
+-- Temp table to load NCTMaster
+DECLARE @InputCTMaster TABLE(
+		Code INT
+		, [CTMasterType] VARCHAR(16)
+		, [CreditLimit] MONEY
+		, [Value] VARCHAR(16)
+);
 
 -- Loading xml into @xmlData variable
 SET @xmlData = (
@@ -57,6 +63,7 @@ BEGIN
 	
 	-- Clean table for new operation date
 	DELETE @InputCardHolder
+	DELETE @InputCTMaster
 	
 	INSERT INTO @InputCardHolder (
 		[Name]
@@ -75,6 +82,22 @@ BEGIN
 		'(root/fechaOperacion[@Fecha=sql:variable("@ActualDate")]/TH/TH)'
 		)
 	AS T(Item)
+
+	INSERT INTO @InputCTMaster(
+		Code
+		, [CTMasterType]
+		, [CreditLimit]
+		, [Value]
+	)
+	SELECT
+		CTM.Item.VALUE('@Codigo', 'INT')
+		, CTM.Item.VALUE('@CTMasterType', 'VARCHAR(16)')
+		, CTM.Item.VALUE('@CreditLimit', 'MONEY')
+		, CTM.Item.VALUE('@Value', 'VARCHAR(16)')
+	FROM @xmlData.NODES(
+		'(root/fechaOperacion[@Fecha=sql:variable("@ActualDate")]/NTCM/NTCM)'
+	)
+	AS CTM(Item)
 
 	SET @ActualRecord = @ActualRecord + 1;
 END
