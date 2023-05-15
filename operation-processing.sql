@@ -103,7 +103,7 @@ BEGIN
 
 	-- Insertion in Database
 	INSERT dbo.MasterAccount(
-		Id
+		IdCreditCardAccount
 		, IdCardHolder
 		, IdAccountType
 		, CreditLimit
