@@ -85,16 +85,16 @@ BEGIN
 
 	INSERT INTO @InputCTMaster(
 		Code
-		, [AccountType]
+		, [CTMasterType]
 		, [CreditLimit]
 		, [Value]
 	)
 	SELECT
-		CTM.Item.VALUE('@Codigo', 'INT')
-		, CTM.Item.VALUE('@TipoCTM', 'VARCHAR(16)')
-		, CTM.Item.VALUE('@LimiteCredito', 'MONEY')
-		, CTM.Item.VALUE('@TH', 'VARCHAR(16)')
-	FROM @xmlData.NODES(
+		CTM.Item.value('@Codigo', 'INT')
+		, CTM.Item.value('@TipoCTM', 'VARCHAR(16)')
+		, CTM.Item.value('@LimiteCredito', 'MONEY')
+		, CTM.Item.value('@TH', 'VARCHAR(16)')
+	FROM @xmlData.nodes(
 		'(root/fechaOperacion[@Fecha=sql:variable("@ActualDate")]/NTCM/NTCM)'
 	)
 	AS CTM(Item)
@@ -109,19 +109,19 @@ BEGIN
 		, CreditLimit
 	)
 	SELECT 
-		MA.Id
+		CT.Id
 		, CH.Id
 		, TY.Id
 		, CTM.CreditLimit
-	FROM dbo.MasterAccount MA
+	FROM dbo.CreditCardAccount CT
 	INNER JOIN 
 	@InputCTMaster CTM
-		ON MA.Code = CTM.Code
+		ON CT.Code = CTM.Code
 	INNER JOIN
 	dbo.CardHolder CH
-		ON CH.Value = CTM.Value
+		ON CH.[Value] = CTM.[Value]
 	INNER JOIN
 	dbo.AccountType TY
-		ON CTM.AccountType = TY.Name
+		ON CTM.CTMasterType = TY.[Name]
 
 END
