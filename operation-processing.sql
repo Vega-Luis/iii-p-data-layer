@@ -16,7 +16,7 @@ DECLARE
 DECLARE
 	@CardHolderName VARCHAR(64)
 	, @DocumentTypeName VARCHAR(16)
-	, @IdentificationValue VARCHAR(16)
+	, @IdentificationValue VARCHAR(16) -- CardHolder identificacion document value
 	, @Username VARCHAR(16)
 	, @Password VARCHAR(16)
 	, @CardHolderUserType INT
@@ -28,6 +28,24 @@ DECLARE
 SELECT @CardHolderUserType = UT.Id
 FROM dbo.UserType UT
 WHERE UT.[Name] = 'Targeta Habiente'
+
+-- Aditional account insertation variables
+DECLARE
+	@MasterAccountCode INT
+	, @AdditionalAccountCode INT
+	, @IS_ADDITIONAL_ACCOUNT INT = 0 -- Addtional account identifier
+	, @ActualAccountId INT
+	, @MasterAccountId INT
+	, @CardHolderId INT
+	;
+
+DECLARE @InputAdditionalAccount TABLE (
+	Sec INT IDENTITY(1,1)
+	, MasterAccountCode INT
+	, AdditionalAccountCode INT
+	, IdentificationValue VARCHAR(16)
+)
+;
 
 -- Temp table to load operation tables from xml
 DECLARE @Dates TABLE (
@@ -43,8 +61,8 @@ DECLARE @InputCardHolder TABLE (
 		, [IdentificationValue] VARCHAR(16)
 		, [Username] VARCHAR(16)
 		, [Password] VARCHAR(16)
-	)
-	;
+)
+;
 
 -- Loading xml into @xmlData variable
 SET @xmlData = (
@@ -101,12 +119,10 @@ BEGIN
 		)
 	AS T(Item)
 
-	-- Set Iteration floor
-	SELECT @ActualIndex = MIN(ICH.Sec)
-	FROM @InputCardHolder ICH
-
-	-- Set iteration ceil
-	SELECT @LastIndex = MAX(ICH.Sec)
+	-- Set Iteration floor and ceil
+	SELECT
+		@ActualIndex = MIN(ICH.Sec)
+		, @LastIndex = MAX(ICH.Sec)
 	FROM @InputCardHolder ICH
 
 	-- Begins insert iteration
@@ -158,7 +174,76 @@ BEGIN
 		
 		SET @ActualIndex = @ActualIndex + 1
 	END
-	-- Ends car holder operations
+	-- Ends car holder operations 
+
+	-- Preprocess input additional accounts
+	INSERT INTO @InputAdditionalAccount (
+		MasterAccountCode
+		, AdditionalAccountCode
+		, IdentificationValue
+	)
+	SELECT
+		T.Item.value('@CodigoTCM', 'INT')
+		, T.Item.value('@CodigoTCA', 'INT')
+		, T.Item.value('@TH', 'VARCHAR(16)')
+	FROM @xmlData.nodes(
+		'(root/fechaOperacion[@Fecha=sql:variable("@ActualDate")]/NTCA/NTCA)'
+		)
+	AS T(Item)
+
+	-- Set Iteration floor and ceil
+	SELECT
+		@ActualIndex = MIN(IAA.Sec)
+		, @LastIndex = MAX(IAA.Sec)
+	FROM @InputCardHolder IAA
+
+	-- begins iteration, inserting input additional accounts
+	WHILE(@ActualIndex <= @LastIndex)
+	BEGIN
+		SELECT
+			@MasterAccountCode = IAA.MasterAccountCode
+			, @AdditionalAccountCode = IAA.AdditionalAccountCode
+			, @IdentificationValue = IAA.IdentificationValue
+		FROM @InputAdditionalAccount IAA
+		WHERE IAA.Sec = @ActualIndex
+
+		-- Get masterAccount Id
+		SELECT @MasterAccountId = CCA.Id
+		FROM dbo.CreditCardAccount CCA
+		WHERE CCA.Code = @MasterAccountCode
+
+		-- Get card holder Id
+		SELECT @CardHolderId = CH.Id
+		FROM dbo.CardHolder CH
+		WHERE CH.Value = @IdentificationValue
+
+		INSERT INTO dbo.CreditCardAccount (
+			Code
+			, IsMaster
+			, CreationDate
+		)
+		VALUES (
+			@AdditionalAccountCode
+			, @IS_ADDITIONAL_ACCOUNT
+			, GETDATE()
+		)
+
+		SET @ActualAccountId = SCOPE_IDENTITY(); -- Get inserted account credit id
+
+		INSERT INTO dbo.AdditionalAccount (
+			IdCreditCardAccount
+			, IdCardHolder
+			, IdMasterAccount
+		)
+		VALUES (
+			@ActualAccountId
+			, @CardHolderId
+			, @MasterAccountId
+		)
+
+		SET @ActualIndex = @ActualIndex + 1
+	END
+	-- ends additional account insertion
 
 	SET @ActualRecord = @ActualRecord + 1;
 END
