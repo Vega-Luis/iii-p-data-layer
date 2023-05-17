@@ -47,6 +47,23 @@ DECLARE @InputAdditionalAccount TABLE (
 )
 ;
 
+-- Physical card insertion variables
+DECLARE
+	@CardCode VARCHAR(16)
+	, @CreditCardAccountCode INT
+	, @ExpirationDate DATE
+	, @CVV INT
+	, @CreditCardAccountId INT
+;
+
+DECLARE @InputPhysicalCard TABLE (
+	Sec INT IDENTITY(1,1)
+	, CardCode VARCHAR(16)
+	, CreditCardAccountCode INT
+	, ExpirationDate DATE
+	, CVV INT
+)
+
 -- Temp table to load operation tables from xml
 DECLARE @Dates TABLE (
 	Sec INT IDENTITY(1,1)
@@ -244,6 +261,61 @@ BEGIN
 		SET @ActualIndex = @ActualIndex + 1
 	END
 	-- ends additional account insertion
+
+	-- Preprocessing input physical cards
+	INSERT INTO @InputPhysicalCard (
+		CardCode
+		, CreditCardAccountCode
+		, ExpirationDate
+		, CVV
+	)
+	SELECT
+		T.Item.value('@Codigo', 'VARCHAR(16)')
+		, T.Item.value('@TCAsociada', 'INT')
+		, T.Item.value('@FechaVencimiento', 'DATE')
+		, T.Item.value('@CCV', 'INT')
+	FROM @xmlData.nodes(
+		'(root/fechaOperacion[@Fecha=sql:variable("@ActualDate")]/NTF/NTF)'
+		)
+	AS T(Item)
+
+	-- Set Iteration floor and ceil
+	SELECT
+		@ActualIndex = MIN(IPC.Sec)
+		, @LastIndex = MAX(IPC.Sec)
+	FROM @InputPhysicalCard IPC
+
+	-- begins iteration, inserting into physical card table
+	WHILE (@ActualIndex <= @LastIndex)
+	BEGIN
+		SELECT
+			@CardCode = IPC.CardCode
+			, @CreditCardAccountCode = IPC.CreditCardAccountCode
+			, @ExpirationDate = IPC.ExpirationDate
+			, @CVV = IPC.CVV
+		FROM @InputPhysicalCard IPC
+		WHERE IPC.Sec = @ActualIndex
+
+		-- Getting credit card account id
+		SELECT @CreditCardAccountId = CCA.Id
+		FROM dbo.CreditCardAccount CCA
+		WHERE CCA.Code = @CreditCardAccountCode
+
+		INSERT INTO dbo.PhysicalCard (
+			IdCreditCardAccount
+			, Code
+			, ExpirationYear
+			, ExpirationMonth
+			, CVV
+		)
+		VALUES (
+			@CreditCardAccountId
+			, @CardCode
+			, DATEPART(YEAR, @ExpirationDate)
+			, DATEPART(MONTH, @ExpirationDate)
+			, @CVV
+		)
+	END
 
 	SET @ActualRecord = @ActualRecord + 1;
 END
