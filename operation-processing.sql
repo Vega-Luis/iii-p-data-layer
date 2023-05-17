@@ -28,6 +28,15 @@ DECLARE @InputCTMaster TABLE(
 		, [CreditLimit] MONEY
 		, [Value] VARCHAR(16)
 );
+--Temp table to load Movement 
+DECLARE @InputMovement TABLE(
+		[Name] VARCHAR(32)
+		, Code INT
+		, DateMovement DATE
+		, Amount MONEY
+		, [DescriptionMovement] NVARCHAR(32)
+		, [Reference] NVARCHAR(16)
+);
 
 -- Loading xml into @xmlData variable
 SET @xmlData = (
@@ -64,6 +73,7 @@ BEGIN
 	-- Clean table for new operation date
 	DELETE @InputCardHolder
 	DELETE @InputCTMaster
+	DELETE @InputMovement
 	
 	INSERT INTO @InputCardHolder (
 		[Name]
@@ -82,7 +92,7 @@ BEGIN
 		'(root/fechaOperacion[@Fecha=sql:variable("@ActualDate")]/TH/TH)'
 		)
 	AS T(Item)
-
+	--Isertion in temp table
 	INSERT INTO @InputCTMaster(
 		Code
 		, [CTMasterType]
@@ -98,10 +108,30 @@ BEGIN
 		'(root/fechaOperacion[@Fecha=sql:variable("@ActualDate")]/NTCM/NTCM)'
 	)
 	AS CTM(Item)
+	--Movements temp
+	INSERT INTO @InputMovement(
+		[Name]
+		, Code
+		, DateMovement
+		, Amount
+		, [DescriptionMovement]
+		, [Reference]
+	)
+	SELECT
+		M.Item.value('@Nombre', 'VARCHAR(32)')
+		, M.Item.value('@TF', 'INT')
+		, M.Item.value('@FechaMovimiento', 'DATE')
+		, M.Item.value('@Monto', 'MONEY')
+		, M.Item.value('@Descripcion', 'NVARCHAR(32)')
+		, M.Item.value('@Referencia', 'NVARCHAR(16)')
+	FROM @xmlData.nodes(
+		'(root/fechaOperacion[@Fecha=sql:variable("@ActualDate")]/Movimiento/Movimiento)'
+	)
+	AS M(Item)
 
 	SET @ActualRecord = @ActualRecord + 1;
 
-	-- Insertion in Database
+	-- Insertion in Database CTM
 	INSERT dbo.MasterAccount(
 		IdCreditCardAccount
 		, IdCardHolder
@@ -124,4 +154,32 @@ BEGIN
 	dbo.AccountType TY
 		ON CTM.CTMasterType = TY.[Name]
 
+	--Insertion in Movement
+	INSERT dbo.Movement(
+		IdMasterAccount
+		, IdMovementType
+		, IdPhysicalCard
+		, [Date]
+		, Amount
+		, [Description]
+		, [Reference]
+	)
+	SELECT 
+		CA.Id
+		, MT.Id
+		, PC.Id
+		, M.DateMovement
+		, M.Amount
+		, M.Description
+		, M.Reference
+	FROM dbo.CreditCardAccount CA
+	INNER JOIN
+	dbo.PhysicalCard PC
+		ON PC.Code = M.Code AND CA.IsMaster = 1
+	INNER JOIN
+	dbo.MovementType MT
+		ON M.[Name] = MT.[Name]
+	CROSS JOIN
+	@InputMovement M
+	
 END
