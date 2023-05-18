@@ -163,6 +163,7 @@ BEGIN
 		, Amount
 		, [Description]
 		, [Reference]
+		, NewBalance
 	)
 	SELECT 
 		CA.Id
@@ -172,6 +173,7 @@ BEGIN
 		, M.Amount
 		, M.Description
 		, M.Reference
+		, dbo.FNCalulateNewBalance(M.Amount, MT.Action, MA.Balance)
 	FROM dbo.CreditCardAccount CA
 	INNER JOIN
 	dbo.PhysicalCard PC
@@ -181,5 +183,35 @@ BEGIN
 		ON M.[Name] = MT.[Name]
 	CROSS JOIN
 	@InputMovement M
-	
+	INNER JOIN 
+	dbo.MasterAccount MA
+		ON MA.IdCreditCardAccount = CA.Id
+
+	--Suspecious movement
+	INSERT dbo.SuspiciousMovement(
+		IdMasterAccount
+		, IdPhysicalCard
+		, [Date]
+		, Amount
+		, [Description]
+		, [Reference]
+	)
+	SELECT 
+		CA.Id
+		, PC.Id
+		, M.DateMovement
+		, M.Amount
+		, M.Description
+		, M.Reference
+	FROM dbo.CreditCardAccount CA
+	INNER JOIN
+	dbo.PhysicalCard PC
+		ON PC.Code = M.Code AND CA.IsMaster = 1
+	CROSS JOIN
+	@InputMovement M
+	WHERE M.DateMovement < @ActualDate
+
+	UPDATE dbo.MasterAccount (ROWLOCK)
+		SET Balance = M.NewBalance
+
 END
