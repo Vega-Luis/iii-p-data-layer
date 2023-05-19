@@ -31,11 +31,12 @@ WHERE UT.[Name] = 'Targeta Habiente'
 
 -- Master account insertion variables
 DECLARE 
-	@MasterAccountCode INT
+	@Code INT
 	, @CreditLimit MONEY
 	, @Balance MONEY
 	, @IsMaster BIT = 1
 	, @CTMType VARCHAR(16)
+	, @Value VARCHAR(16)
 	, @IdCreditCardAccount INT
 	, @IdCardHolder INT
 	, @IdAccountType INT
@@ -44,10 +45,10 @@ DECLARE
 
 Declare @InputMasterAccount TABLE(
 	Sec INT IDENTITY(1,1)
-	, MasterAccountCode INT
+	, Code INT
 	, CTMType VARCHAR(16)
 	, [CreditLimit] MONEY
-	, [IdentificationValue] VARCHAR(16)
+	, [Value] VARCHAR(16)
 );
 
 -- Aditional account insertation variables
@@ -136,6 +137,7 @@ BEGIN
 	
 	-- Begins card holder operations
 	-- Clean table for new operation date
+	
 	DELETE @InputCardHolder
 	
 	-- Preprocess new card holders
@@ -200,7 +202,7 @@ BEGIN
 			[Id]
 			, [IdDocumentType]
 			, [Name]
-			, [IdentificationValue]
+			, [Value]
 		)
 		VALUES (
 			@ActualCardHolderId
@@ -212,16 +214,17 @@ BEGIN
 		
 		SET @ActualIndex = @ActualIndex + 1
 	END
+
 	-- Ends car holder operations 
 
 	-- Begin Master account insertion
 	DELETE @InputMasterAccount
 
 	INSERT INTO @InputMasterAccount(
-		MasterAccountCode
+		Code
 		, [CTMType]
 		, [CreditLimit]
-		, [IdentificationValue]
+		, [Value]
 	)
 	SELECT
 		CTM.Item.value('@Codigo', 'INT')
@@ -242,28 +245,23 @@ BEGIN
 	WHILE (@ActualIndex <= @LastIndex)
 	BEGIN
 			SELECT 
-			@MasterAccountCode = IMA.MasterAccountCode
+			@Code = IMA.Code
 			, @CTMType = IMA.CTMType
 			, @CreditLimit = IMA.CreditLimit
 			, @Balance = IMA.CreditLimit
-			, @IdentificationValue = IMA.IdentificationValue
+			, @Value = IMA.[Value]
 		FROM @InputMasterAccount IMA
 		WHERE IMA.Sec = @ActualIndex
-
-		-- Get Id of credit card account
-		SELECT @IdCreditCardAccount = CCA.Id
-		FROM dbo.CreditCardAccount CCA
-		WHERE CCA.Code = @MasterAccountCode
 
 		-- Get Master Account Type
 		SELECT @IdAccountType = MAT.Id
 		FROM dbo.AccountType MAT
-		WHERE MAT.Name = CTMType
-
+		WHERE MAT.[Name] = @CTMType
+	
 		-- Get card holder Id
 		SELECT @IdCardHolder = CH.Id
 		FROM dbo.CardHolder CH
-		WHERE CH.Value = @IdentificationValue
+		WHERE CH.[Value] = @Value
 
 		--Insertion in Credit card account
 		INSERT INTO dbo.CreditCardAccount (
@@ -272,7 +270,7 @@ BEGIN
 			, CreationDate
 		)
 		VALUES (
-			@MasterAccountCode
+			@Code
 			, @IsMaster
 			, @ActualDate
 		)
@@ -289,16 +287,18 @@ BEGIN
 			, AccruedPenaultyInterest
 		)
 		VALUES(
-			@IdCreditCardAccount
+			@ActualAccountId
 			, @IdCardHolder
 			, @IdAccountType
 			, @CreditLimit
 			, @Balance
+			, @AccruedCurrentInterest
+			, @AccruedPenaultyInterest
 		)
 		SET @ActualIndex = @ActualIndex + 1
 	END
 	-- End Master account insertion
-
+	
 	-- Preprocess input additional accounts
 	INSERT INTO @InputAdditionalAccount (
 		MasterAccountCode
@@ -422,6 +422,7 @@ BEGIN
 			, @CVV
 		)
 	END
+	
 
 	SET @ActualRecord = @ActualRecord + 1;
 END
