@@ -242,7 +242,7 @@ BEGIN
 		VALUES (
 			@AdditionalAccountCode
 			, @IS_ADDITIONAL_ACCOUNT
-			, GETDATE()
+			, @ActualDate
 		)
 
 		SET @ActualAccountId = SCOPE_IDENTITY(); -- Get inserted account credit id
