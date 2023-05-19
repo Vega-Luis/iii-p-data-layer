@@ -29,6 +29,27 @@ SELECT @CardHolderUserType = UT.Id
 FROM dbo.UserType UT
 WHERE UT.[Name] = 'Targeta Habiente'
 
+-- Master account insertion variables
+DECLARE 
+	@MasterAccountCode INT
+	, @CreditLimit MONEY
+	, @Balance MONEY
+	, @IsMaster BIT = 1
+	, @CTMType VARCHAR(16)
+	, @IdCreditCardAccount INT
+	, @IdCardHolder INT
+	, @IdAccountType INT
+	, @AccruedCurrentInterest MONEY = 0
+	, @AccruedPenaultyInterest MONEY = 0
+
+Declare @InputMasterAccount TABLE(
+	Sec INT IDENTITY(1,1)
+	, MasterAccountCode INT
+	, CTMType VARCHAR(16)
+	, [CreditLimit] MONEY
+	, [IdentificationValue] VARCHAR(16)
+);
+
 -- Aditional account insertation variables
 DECLARE
 	@MasterAccountCode INT
@@ -179,7 +200,7 @@ BEGIN
 			[Id]
 			, [IdDocumentType]
 			, [Name]
-			, [Value]
+			, [IdentificationValue]
 		)
 		VALUES (
 			@ActualCardHolderId
@@ -192,6 +213,91 @@ BEGIN
 		SET @ActualIndex = @ActualIndex + 1
 	END
 	-- Ends car holder operations 
+
+	-- Begin Master account insertion
+	DELETE @InputMasterAccount
+
+	INSERT INTO @InputMasterAccount(
+		MasterAccountCode
+		, [CTMType]
+		, [CreditLimit]
+		, [IdentificationValue]
+	)
+	SELECT
+		CTM.Item.value('@Codigo', 'INT')
+		, CTM.Item.value('@TipoCTM', 'VARCHAR(16)')
+		, CTM.Item.value('@LimiteCredito', 'MONEY')
+		, CTM.Item.value('@TH', 'VARCHAR(16)')
+	FROM @xmlData.nodes(
+		'(root/fechaOperacion[@Fecha=sql:variable("@ActualDate")]/NTCM/NTCM)'
+	)
+	AS CTM(Item)
+
+	-- Set Iteration floor and ceil
+	SELECT
+		@ActualIndex = MIN(CTM.Sec)
+		, @LastIndex = MAX(CTM.Sec)
+	FROM @InputMasterAccount CTM
+
+	WHILE (@ActualIndex <= @LastIndex)
+	BEGIN
+			SELECT 
+			@MasterAccountCode = IMA.MasterAccountCode
+			, @CTMType = IMA.CTMType
+			, @CreditLimit = IMA.CreditLimit
+			, @Balance = IMA.CreditLimit
+			, @IdentificationValue = IMA.IdentificationValue
+		FROM @InputMasterAccount IMA
+		WHERE IMA.Sec = @ActualIndex
+
+		-- Get Id of credit card account
+		SELECT @IdCreditCardAccount = CCA.Id
+		FROM dbo.CreditCardAccount CCA
+		WHERE CCA.Code = @MasterAccountCode
+
+		-- Get Master Account Type
+		SELECT @IdAccountType = MAT.Id
+		FROM dbo.AccountType MAT
+		WHERE MAT.Name = CTMType
+
+		-- Get card holder Id
+		SELECT @IdCardHolder = CH.Id
+		FROM dbo.CardHolder CH
+		WHERE CH.Value = @IdentificationValue
+
+		--Insertion in Credit card account
+		INSERT INTO dbo.CreditCardAccount (
+			Code
+			, IsMaster
+			, CreationDate
+		)
+		VALUES (
+			@MasterAccountCode
+			, @IsMaster
+			, @ActualDate
+		)
+
+		SET @ActualAccountId = SCOPE_IDENTITY(); -- Get inserted account credit id
+
+		INSERT INTO dbo.MasterAccount(
+			IdCreditCardAccount
+			, IdCardHolder
+			, IdAccountType
+			, CreditLimit
+			, Balance
+			, AccruedCurrentInterest
+			, AccruedPenaultyInterest
+		)
+		VALUES(
+			@IdCreditCardAccount
+			, @IdCardHolder
+			, @IdAccountType
+			, @CreditLimit
+			, @Balance
+		)
+		SET @ActualIndex = @ActualIndex + 1
+	END
+	-- End Master account insertion
 
 	-- Preprocess input additional accounts
 	INSERT INTO @InputAdditionalAccount (
