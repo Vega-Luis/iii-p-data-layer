@@ -73,16 +73,18 @@ DECLARE @InputAdditionalAccount TABLE (
 DECLARE
 	@CardCode VARCHAR(16)
 	, @CreditCardAccountCode INT
-	, @ExpirationDate DATE
+	, @ExpirationDateString VARCHAR(8)
 	, @CVV INT
 	, @CreditCardAccountId INT
+	, @ExpirationMonth INT
+	, @ExpirationYear INT
 ;
 
 DECLARE @InputPhysicalCard TABLE (
 	Sec INT IDENTITY(1,1)
 	, CardCode VARCHAR(16)
 	, CreditCardAccountCode INT
-	, ExpirationDate DATE
+	, ExpirationDateString VARCHAR(8)
 	, CVV INT
 )
 
@@ -164,7 +166,7 @@ BEGIN
 		@ActualIndex = MIN(ICH.Sec)
 		, @LastIndex = MAX(ICH.Sec)
 	FROM @InputCardHolder ICH
-
+	/*
 	-- Begins insert iteration
 	WHILE (@ActualIndex <= @LastIndex)
 	BEGIN
@@ -216,7 +218,7 @@ BEGIN
 	END
 
 	-- Ends car holder operations 
-
+	*/
 	-- Begin Master account insertion
 	DELETE @InputMasterAccount
 
@@ -241,7 +243,7 @@ BEGIN
 		@ActualIndex = MIN(CTM.Sec)
 		, @LastIndex = MAX(CTM.Sec)
 	FROM @InputMasterAccount CTM
-
+	/*
 	WHILE (@ActualIndex <= @LastIndex)
 	BEGIN
 			SELECT 
@@ -298,8 +300,10 @@ BEGIN
 		SET @ActualIndex = @ActualIndex + 1
 	END
 	-- End Master account insertion
-	
+	*/
+
 	-- Preprocess input additional accounts
+	
 	INSERT INTO @InputAdditionalAccount (
 		MasterAccountCode
 		, AdditionalAccountCode
@@ -319,7 +323,7 @@ BEGIN
 		@ActualIndex = MIN(IAA.Sec)
 		, @LastIndex = MAX(IAA.Sec)
 	FROM @InputCardHolder IAA
-
+	/*
 	-- begins iteration, inserting input additional accounts
 	WHILE(@ActualIndex <= @LastIndex)
 	BEGIN
@@ -367,18 +371,18 @@ BEGIN
 		SET @ActualIndex = @ActualIndex + 1
 	END
 	-- ends additional account insertion
-
+	*/
 	-- Preprocessing input physical cards
 	INSERT INTO @InputPhysicalCard (
 		CardCode
 		, CreditCardAccountCode
-		, ExpirationDate
+		, ExpirationDateString
 		, CVV
 	)
 	SELECT
 		T.Item.value('@Codigo', 'VARCHAR(16)')
 		, T.Item.value('@TCAsociada', 'INT')
-		, T.Item.value('@FechaVencimiento', 'DATE')
+		, T.Item.value('@FechaVencimiento', 'VARCHAR(8)')
 		, T.Item.value('@CCV', 'INT')
 	FROM @xmlData.nodes(
 		'(root/fechaOperacion[@Fecha=sql:variable("@ActualDate")]/NTF/NTF)'
@@ -390,14 +394,14 @@ BEGIN
 		@ActualIndex = MIN(IPC.Sec)
 		, @LastIndex = MAX(IPC.Sec)
 	FROM @InputPhysicalCard IPC
-
+	
 	-- begins iteration, inserting into physical card table
 	WHILE (@ActualIndex <= @LastIndex)
 	BEGIN
 		SELECT
 			@CardCode = IPC.CardCode
 			, @CreditCardAccountCode = IPC.CreditCardAccountCode
-			, @ExpirationDate = IPC.ExpirationDate
+			, @ExpirationDateString = IPC.ExpirationDateString
 			, @CVV = IPC.CVV
 		FROM @InputPhysicalCard IPC
 		WHERE IPC.Sec = @ActualIndex
@@ -407,20 +411,27 @@ BEGIN
 		FROM dbo.CreditCardAccount CCA
 		WHERE CCA.Code = @CreditCardAccountCode
 
+		SELECT
+			@ExpirationMonth = CAST(SUBSTRING(@ExpirationDateString, 1, CHARINDEX('/', @ExpirationDateString) - 1) AS INT)
+			, @ExpirationYear = CAST(SUBSTRING(@ExpirationDateString, CHARINDEX('/', @ExpirationDateString) + 1, 4) AS INT);
+		
 		INSERT INTO dbo.PhysicalCard (
 			IdCreditCardAccount
 			, Code
 			, ExpirationYear
 			, ExpirationMonth
 			, CVV
+			, CreationDate
 		)
 		VALUES (
 			@CreditCardAccountId
 			, @CardCode
-			, DATEPART(YEAR, @ExpirationDate)
-			, DATEPART(MONTH, @ExpirationDate)
+			, @ExpirationYear
+			, @ExpirationMonth
 			, @CVV
+			, @ActualDate
 		)
+		SET @ActualIndex = @ActualIndex + 1
 	END
 	
 
