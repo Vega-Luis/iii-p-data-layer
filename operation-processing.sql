@@ -88,6 +88,31 @@ DECLARE @InputPhysicalCard TABLE (
 	, CVV INT
 )
 
+-- Movements insertion 
+DECLARE 
+	@MovementName VARCHAR(32)
+	, @CodeTF INT
+	, @DateMovement DATE
+	, @Amount MONEY
+	, @Reference VARCHAR(16)
+	, @NewBalance MONEY = 0
+	, @Action VARCHAR(16)
+	, @Balance MONEY
+	, @IdMasterAccount INT
+	, @IdMovementType INT
+	, @IdAccountState INT
+	, @IdPhysicalCard INT
+
+DECLARE @InputMovement TABLE(
+	Sec INT IDENTITY(1,1)
+	, [MovementName] VARCHAR(32)
+	, CodeTF INT
+	, DateMovement DATE
+	, Amount MONEY
+	, [DescriptionMovement] VARCHAR(32)
+	, [Reference] VARCHAR(16)
+);
+
 -- Temp table to load operation tables from xml
 DECLARE @Dates TABLE (
 	Sec INT IDENTITY(1,1)
@@ -246,7 +271,7 @@ BEGIN
 	/*
 	WHILE (@ActualIndex <= @LastIndex)
 	BEGIN
-			SELECT 
+		SELECT 
 			@Code = IMA.Code
 			, @CTMType = IMA.CTMType
 			, @CreditLimit = IMA.CreditLimit
@@ -434,6 +459,129 @@ BEGIN
 		SET @ActualIndex = @ActualIndex + 1
 	END
 	
+	-- Movement Insertion
+	DELETE @InputMovement
 
+	INSERT INTO @InputMovement(
+		[MovementName]
+		, CodeTF
+		, DateMovement
+		, Amount
+		, [DescriptionMovement]
+		, [Reference]
+	)
+	SELECT
+		M.Item.value('@Nombre', 'VARCHAR(32)')
+		, M.Item.value('@TF', 'INT')
+		, M.Item.value('@FechaMovimiento', 'DATE')
+		, M.Item.value('@Monto', 'MONEY')
+		, M.Item.value('@Descripcion', 'NVARCHAR(32)')
+		, M.Item.value('@Referencia', 'NVARCHAR(16)')
+	FROM @xmlData.nodes(
+		'(root/fechaOperacion[@Fecha=sql:variable("@ActualDate")]/Movimiento/Movimiento)'
+	)
+	AS M(Item)
+	--Set iteration
+	SELECT
+		@ActualIndex = MIN(M.Sec)
+		, @LastIndex = MAX(M.Sec)
+	FROM @InputMovement M
+
+	WHILE (@ActualIndex <= @LastIndex)
+	BEGIN
+		SELECT
+			@MovementName = IMO.MovementName
+			, @CodeTF = IMO.CodeTF
+			, @DateMovement = IMO.DateMovement
+			, @Amount = IMO.Amount
+			, @DescriptionMovement = IMO.DescriptionMovement
+		FROM @InputMovement IMO
+		WHERE IMO.Sec = @ActualIndex
+
+		--Get master account Id
+		SELECT @IdMasterAccount = PC.IdCreditCardAccount
+		FROM dbo.PhysicalCard PC
+		WHERE PC.Code = @CodeTF
+
+		--Get movement type
+		SELECT @IdMovementType = MT.Id
+		FROM dbo.MovementType MT
+		WHERE MT.Name = @MovementName
+
+		--Get account state??
+		SELECT @IdAccountState = AST.Id
+		FROM dbo.AccountState AST
+		WHERE AST.IdMaster = @IdMasterAccount
+		AND DATEPART(AST.Date, MONTH) = DATEPART(@DateMovement, MONTH)
+
+		--Get Physical card
+		SELECT @IdPhysicalCard = PC.Id
+		FROM dbo.PhysicalCard PC
+		WHERE PC.Code = @CodeTF
+		
+		--Get Action
+		SELECT @Account = MT.Name
+		FROM dbo.MovementType MT
+		WHERE MT.Id = @IdMovementType
+
+		--Get Balance
+		SELECT @Balance = MA.Balance
+		FROM dbo.MasterAccount MA
+		WHERE MA.IdCreditCardAccount = @IdMasterAccount
+
+		SET @ActualAccountId = SCOPE_IDENTITY(); -- Get inserted account credit id
+
+		IF @DateMovement < @ActualDate
+		BEGIN
+			INSERT INTO dbo.SuspiciousMovement(
+				IdMasterAccount
+				, IdPhysicalCard
+				, [Date]
+				, Amount
+				, [Description]
+				, [Reference]
+			)
+			VALUES(
+				@ActualAccountId
+				, @IdPhysicalCard
+				, @DateMovement
+				, @Amount
+				, @DescriptionMovement
+				, @Reference
+			)
+		END
+		ELSE
+		BEGIN
+		--Database insertion
+			INSERT INTO dbo.Movement(
+				IdMasterAccount
+				, IdMovementType
+				, IdPhysicalCard
+				, [Date]
+				, Amount
+				, [Description]
+				, [Reference]
+				, NewBalance
+			)
+			VALUES(
+				@ActualAccountId
+				, @IdMovementType
+				, @IdPhysicalCard
+				, @DateMovement
+				, @Amount
+				, @DescriptionMovement
+				, @Reference
+				, @NewBalance
+			)
+		END
+		UPDATE dbo.MasterAccount (ROWLOCK)
+		SET Balance = M.dbo.FNCalculateNewBalance(@Amount, @Action, @Balance)
+		WHERE IdCreditCardAccount = @ActualAccountId
+		
+
+		SET @ActualIndex = @ActualIndex + 1
+	END
+	--End Movement insertion
+	--Counter Main While
 	SET @ActualRecord = @ActualRecord + 1;
 END
