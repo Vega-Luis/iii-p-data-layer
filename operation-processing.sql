@@ -498,10 +498,7 @@ BEGIN
 		FROM @InputMovement IMO
 		WHERE IMO.Sec = @ActualIndex
 
-		--Get master account Id
-		SELECT @IdMasterAccount = PC.IdCreditCardAccount
-		FROM dbo.PhysicalCard PC
-		WHERE PC.Code = @CodeTF
+		SET @ActualAccountId = SCOPE_IDENTITY(); -- Get inserted account credit id
 
 		--Get movement type
 		SELECT @IdMovementType = MT.Id
@@ -527,10 +524,9 @@ BEGIN
 		--Get Balance
 		SELECT @Balance = MA.Balance
 		FROM dbo.MasterAccount MA
-		WHERE MA.IdCreditCardAccount = @IdMasterAccount
+		WHERE MA.IdCreditCardAccount = @ActualAccountId
 
-		SET @ActualAccountId = SCOPE_IDENTITY(); -- Get inserted account credit id
-
+		
 		IF @DateMovement < @ActualDate
 		BEGIN
 			INSERT INTO dbo.SuspiciousMovement(
