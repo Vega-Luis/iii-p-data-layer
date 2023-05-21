@@ -40,6 +40,7 @@ DECLARE
 	, @IdCreditCardAccount INT
 	, @IdCardHolder INT
 	, @IdAccountType INT
+	, @IdAccountState INT
 	, @AccruedCurrentInterest MONEY = 0
 	, @AccruedPenaultyInterest MONEY = 0
 
@@ -97,10 +98,8 @@ DECLARE
 	, @Reference VARCHAR(16)
 	, @NewBalance MONEY = 0
 	, @Action VARCHAR(16)
-	, @Balance MONEY
 	, @IdMasterAccount INT
 	, @IdMovementType INT
-	, @IdAccountState INT
 	, @IdPhysicalCard INT
 
 DECLARE @InputMovement TABLE(
@@ -268,7 +267,7 @@ BEGIN
 		@ActualIndex = MIN(CTM.Sec)
 		, @LastIndex = MAX(CTM.Sec)
 	FROM @InputMasterAccount CTM
-	/*
+	
 	WHILE (@ActualIndex <= @LastIndex)
 	BEGIN
 		SELECT 
@@ -322,10 +321,22 @@ BEGIN
 			, @AccruedCurrentInterest
 			, @AccruedPenaultyInterest
 		)
+
+		INSERT INTO dbo.AccountState(
+			IdMasterAccount
+			, BillingPeriod
+			, MinPaymentDueDate
+		)
+		VALUES(
+			@ActualAccountId
+			, @ActualDate
+			, DATEADD(MONTH, 1, @ActualDate)
+		)
+
 		SET @ActualIndex = @ActualIndex + 1
 	END
 	-- End Master account insertion
-	*/
+	
 
 	-- Preprocess input additional accounts
 	
@@ -419,7 +430,7 @@ BEGIN
 		@ActualIndex = MIN(IPC.Sec)
 		, @LastIndex = MAX(IPC.Sec)
 	FROM @InputPhysicalCard IPC
-	
+	/*
 	-- begins iteration, inserting into physical card table
 	WHILE (@ActualIndex <= @LastIndex)
 	BEGIN
@@ -578,6 +589,6 @@ BEGIN
 		SET @ActualIndex = @ActualIndex + 1
 	END
 	--End Movement insertion
-	--Counter Main While
+	--Counter Main While*/
 	SET @ActualRecord = @ActualRecord + 1;
 END
