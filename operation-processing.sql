@@ -59,6 +59,7 @@ DECLARE
 	, @ActualAccountId INT
 	, @MasterAccountId INT
 	, @CardHolderId INT
+	, @AccountStateId INT
 	;
 
 DECLARE @InputAdditionalAccount TABLE (
@@ -323,7 +324,7 @@ BEGIN
 		@ActualIndex = MIN(IAA.Sec)
 		, @LastIndex = MAX(IAA.Sec)
 	FROM @InputCardHolder IAA
-	/*
+	
 	-- begins iteration, inserting input additional accounts
 	WHILE(@ActualIndex <= @LastIndex)
 	BEGIN
@@ -343,6 +344,13 @@ BEGIN
 		SELECT @CardHolderId = CH.Id
 		FROM dbo.CardHolder CH
 		WHERE CH.Value = @IdentificationValue
+
+		-- Get account state id
+		SELECT TOP 1
+			@AccountStateId = A.ID
+		FROM dbo.AccountState A
+		WHERE A.IdMasterAccount = @MasterAccountId
+		ORDER BY BillingPeriod DESC
 
 		INSERT INTO dbo.CreditCardAccount (
 			Code
@@ -367,11 +375,24 @@ BEGIN
 			, @CardHolderId
 			, @MasterAccountId
 		)
+		SET @ActualAccountId = SCOPE_IDENTITY();
+		
+
+		-- Creating sub account state for additional account
+		-- The other attributes start in 0 by default
+		INSERT INTO dbo.SubAccountState (
+			IdAdditionalAccount
+			, IdAccountState
+		)
+		VALUES (
+			@ActualAccountId
+			, @AccountStateId
+		)
 
 		SET @ActualIndex = @ActualIndex + 1
 	END
 	-- ends additional account insertion
-	*/
+	
 	-- Preprocessing input physical cards
 	INSERT INTO @InputPhysicalCard (
 		CardCode
