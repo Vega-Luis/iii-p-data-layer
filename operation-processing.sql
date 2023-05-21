@@ -375,7 +375,6 @@ BEGIN
 			, @CardHolderId
 			, @MasterAccountId
 		)
-		SET @ActualAccountId = SCOPE_IDENTITY();
 		
 
 		-- Creating sub account state for additional account
@@ -415,7 +414,7 @@ BEGIN
 		@ActualIndex = MIN(IPC.Sec)
 		, @LastIndex = MAX(IPC.Sec)
 	FROM @InputPhysicalCard IPC
-	
+	/*
 	-- begins iteration, inserting into physical card table
 	WHILE (@ActualIndex <= @LastIndex)
 	BEGIN
@@ -455,6 +454,6 @@ BEGIN
 		SET @ActualIndex = @ActualIndex + 1
 	END
 	
-
+	*/
 	SET @ActualRecord = @ActualRecord + 1;
 END
