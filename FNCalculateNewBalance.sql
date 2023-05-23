@@ -2,11 +2,11 @@ CREATE FUNCTION FNCalculateNewBalance(
     @inAmount MONEY
     , @inAction VARCHAR(16)
     , @inBalance MONEY
-    , @outResultBalance MONEY
 )
 RETURNS MONEY
 AS
 BEGIN
+    DECLARE @outResultBalance MONEY
     IF(@inAction = 'Credito')
     BEGIN
         SET @outResultBalance = @inBalance + @inAmount
