@@ -114,6 +114,22 @@ DECLARE @InputMovement TABLE(
 	, [Reference] VARCHAR(16)
 );
 
+-- AccountState update variables
+	DECLARE
+		@CurrentBalance MONEY = 0
+		, @QATMOperations INT = 0
+		, @QBrandOperations INT = 0
+		, @TotalPaymentsBeforeDueDate MONEY = 0
+		, @TotalPaymentsDuringMonth MONEY = 0
+		, @QPaymentsDurginMonth INT = 0
+		, @TotalPurchases MONEY = 0
+		, @QPurchases INT = 0
+		, @TotalWithdrawals MONEY = 0
+		, @QWithdrawals INT = 0
+		, @TotalCredits MONEY = 0
+		, @QCredits INT = 0
+		, @TotalDebits MONEY = 0
+		, @QDebits INT = 0
 -- Temp table to load operation tables from xml
 DECLARE @Dates TABLE (
 	Sec INT IDENTITY(1,1)
@@ -165,7 +181,7 @@ BEGIN
 	
 	-- Begins card holder operations
 	-- Clean table for new operation date
-	
+	/*
 	DELETE @InputCardHolder
 	
 	-- Preprocess new card holders
@@ -192,7 +208,7 @@ BEGIN
 		@ActualIndex = MIN(ICH.Sec)
 		, @LastIndex = MAX(ICH.Sec)
 	FROM @InputCardHolder ICH
-	/*
+	*//*
 	-- Begins insert iteration
 	WHILE (@ActualIndex <= @LastIndex)
 	BEGIN
@@ -245,6 +261,7 @@ BEGIN
 
 	-- Ends car holder operations 
 	*/
+	/*
 	-- Begin Master account insertion
 	DELETE @InputMasterAccount
 
@@ -269,7 +286,7 @@ BEGIN
 		@ActualIndex = MIN(CTM.Sec)
 		, @LastIndex = MAX(CTM.Sec)
 	FROM @InputMasterAccount CTM
-	/*
+	*//*
 	WHILE (@ActualIndex <= @LastIndex)
 	BEGIN
 		SELECT 
@@ -341,7 +358,7 @@ BEGIN
 	
 
 	-- Preprocess input additional accounts
-	
+	/*
 	INSERT INTO @InputAdditionalAccount (
 		MasterAccountCode
 		, AdditionalAccountCode
@@ -361,7 +378,7 @@ BEGIN
 		@ActualIndex = MIN(IAA.Sec)
 		, @LastIndex = MAX(IAA.Sec)
 	FROM @InputCardHolder IAA
-	/*
+	*//*
 	-- begins iteration, inserting input additional accounts
 	WHILE(@ActualIndex <= @LastIndex)
 	BEGIN
@@ -409,7 +426,7 @@ BEGIN
 		SET @ActualIndex = @ActualIndex + 1
 	END
 	-- ends additional account insertion
-	*/
+	*//*
 	-- Preprocessing input physical cards
 	INSERT INTO @InputPhysicalCard (
 		CardCode
@@ -432,7 +449,7 @@ BEGIN
 		@ActualIndex = MIN(IPC.Sec)
 		, @LastIndex = MAX(IPC.Sec)
 	FROM @InputPhysicalCard IPC
-	/*
+	*//*
 	-- begins iteration, inserting into physical card table
 	WHILE (@ActualIndex <= @LastIndex)
 	BEGIN
@@ -475,6 +492,7 @@ BEGIN
 	-- Movement Insertion
 	DELETE @InputMovement
 
+	-- Preprocces movements from xml data
 	INSERT INTO @InputMovement(
 		[MovementName]
 		, CodeTF
@@ -494,14 +512,17 @@ BEGIN
 		'(root/fechaOperacion[@Fecha=sql:variable("@ActualDate")]/Movimiento/Movimiento)'
 	)
 	AS M(Item)
+
 	--Set iteration
 	SELECT
 		@ActualIndex = MIN(M.Sec)
 		, @LastIndex = MAX(M.Sec)
 	FROM @InputMovement M
 
+	-- Beggins insertion iteration
 	WHILE (@ActualIndex <= @LastIndex)
 	BEGIN
+		-- Obtains @InputMovement record in position @ActualIndex
 		SELECT
 			@MovementName = IMO.MovementName
 			, @CodeTF = IMO.CodeTF
@@ -513,12 +534,29 @@ BEGIN
 		WHERE IMO.Sec = @ActualIndex
 
 		--Get Physical card, Get Expiration date
-		SELECT @IdPhysicalCard = PC.Id
+		SELECT
+				@IdPhysicalCard = PC.Id
 				, @IdCreditCardAccount = PC.IdCreditCardAccount
 				, @ExpirationYear = PC.ExpirationYear
-				, @ExpirationMonth = PC.ExpirationMonth									
+				, @ExpirationMonth = PC.ExpirationMonth		
 		FROM dbo.PhysicalCard PC
 		WHERE PC.Code = @CodeTF
+
+		-- Get Master account Id
+		-- If the creditCardAccount is additional maps his master
+		SELECT @MasterAccountId = IIF (
+			(
+			SELECT CAA.IsMaster
+			FROM dbo.CreditCardAccount CAA
+			WHERE CAA.Id = @IdCreditCardAccount
+			) = 1
+			, @IdCreditCardAccount
+			, (
+			SELECT AA.IdMasterAccount
+			FROM dbo.AdditionalAccount AA
+			WHERE AA.IdCreditCardAccount = @IdCreditCardAccount
+			)
+		)
 		
 		--Get movement type
 		SELECT @IdMovementType = MT.Id
@@ -528,14 +566,10 @@ BEGIN
 		--Get account state id
 		SELECT TOP 1 @IdAccountState = AST.Id
 		FROM dbo.AccountState AST
-		WHERE AST.IdMasterAccount = @IdCreditCardAccount
+		WHERE AST.IdMasterAccount = @MasterAccountId
 		ORDER BY BillingPeriod DESC
 
-		PRINT CONCAT(@IdCreditCardAccount, 'hola********************');
-		--Get SubAcountState id
-		--SELECT @SubAccountState = SAS.Id
-		--FROM dbo.SubAccountState SAS
-		--WHERE SAS.ID = @IdCreditCardAccount
+		PRINT CONCAT(@MasterAccountId, '*************************************************************');
 
 		--Get Action
 		SELECT @Action = MT.[Name]
@@ -545,11 +579,11 @@ BEGIN
 		--Get Balance
 		SELECT @Balance = MA.Balance
 		FROM dbo.MasterAccount MA
-		WHERE MA.IdCreditCardAccount = @IdCreditCardAccount
-
+		WHERE MA.IdCreditCardAccount = @MasterAccountId
+		
+		-- Suspecious movement insertion
 		IF dbo.FNIsExpired(@ExpirationYear, @ExpirationMonth, @ActualDate) = 1
 		BEGIN
-		-- Suspecious movement insertion
 			INSERT INTO dbo.SuspiciousMovement(
 				IdMasterAccount
 				, IdPhysicalCard
@@ -559,7 +593,7 @@ BEGIN
 				, [Reference]
 			)
 			VALUES(
-				@IdCreditCardAccount
+				@MasterAccountId
 				, @IdPhysicalCard
 				, @DateMovement
 				, @Amount
@@ -582,7 +616,7 @@ BEGIN
 				, NewBalance
 			)
 			VALUES(
-				@IdCreditCardAccount
+				@MasterAccountId
 				, @IdMovementType
 				, @IdAccountState
 				, @IdPhysicalCard
@@ -599,11 +633,11 @@ BEGIN
 
 		UPDATE dbo.MasterAccount 
 		SET Balance = @Balance
-		WHERE IdCreditCardAccount = @IdCreditCardAccount
+		WHERE IdCreditCardAccount = @MasterAccountId
 
 		UPDATE dbo.Movement
 		SET NewBalance = @Balance
-		WHERE IdMasterAccount = @IdCreditCardAccount
+		WHERE IdMasterAccount = @MasterAccountId
 
 		-- Always execute
 		IF @MovementName = 'Compra'
@@ -714,4 +748,5 @@ BEGIN
 	--End Movement insertion
 	--Counter Main While
 	SET @ActualRecord = @ActualRecord + 1;
+	SELECT @ActualDate
 END
