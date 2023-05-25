@@ -540,8 +540,10 @@ BEGIN
 	)
 
 	DECLARE @ClosingAccountStateMovement TABLE (
-		IdMasterAccount INT
+		Sec INT IDENTITY(1,1)
+		, IdMasterAccount INT
 		, IdMovementType INT
+		, IdAccountState INT
 		, IdPhysicalCard INT
 		, [Description] VARCHAR(64)
 		, [Date] DATE
@@ -581,12 +583,24 @@ BEGIN
 			, @FRAUD_INSURANCE_RULE VARCHAR(64) = 'Cargo Seguro Contra Fraudes'
 			, @OVER_ATM_OPERATIONS_RULE VARCHAR(64) = 'Multa exceso de operaciones ATM'
 			, @OVER_BRAND_OPERATIONS_RULE VARCHAR(64) = 'Multa exceso de operaciones Ventanilla'
+			, @ATM_OPERATIONS_LIMIT_RULE VARCHAR(64) = 'Cantidad de opraciones en ATM'
+			, @BRAND_OPERATIONS_LIMIT_RULE VARCHAR(64) = 'Cantidad de operacion en Ventanilla'
 			, @REFERENCE VARCHAR(64) = 'Closing Account State'
 			, @QAdditionalAccounts INT
+			, @ATMOperationsLimit INT
+			, @BrandOperationsLimit INT
+			, @IdPhysicalCard INT
 			;
 
+			SELECT TOP 1
+				@IdPhysicalCard = PC.Id
+			FROM dbo.PhysicalCard PC
+			WHERE PC.IdCreditCardAccount = @IdMasterAccount
+			ORDER BY PC.CreationDate DESC
+
+
 			-- Get total additional accounts
-			SELECT @TotalAdditionalAccount = COUNT(AA.IdCreditCardAccount)
+			SELECT @QAdditionalAccountS = COUNT(AA.IdCreditCardAccount)
 			FROM dbo.AdditionalAccount AA
 			WHERE AA.IdMasterAccount = @MasterAccountId
 
@@ -619,20 +633,20 @@ BEGIN
 			SET @IdMovementType = dbo.FNGetMovementTypeId(@MOVEMENT_TYPE_SERVICES)
 
 			SET @CurrentBalance = @CurrentBalance - @MasterAccountFee
-			INSERT @ClosingAccountStateMovement
+			INSERT @ClosingAccountStateMovement 
 			VALUES (
 				@IdMasterAccount
 				, @IdMovementType
 				, @IdAccountState
 				, @IdPhysicalCard
-				, @MOVEMENT_TYPE_SERVICES
+				, @MASTER_ACCOUNT_SERVICES_RULE
 				, @ActualDate
 				, @MasterAccountFee
 				, @REFERENCE
 				, @CurrentBalance
 			)
 
-			-- Inserting additional account servise fee
+			-- Inserting additional account servise fee movement
 			SET @CurrentBalance = @CurrentBalance - @AdditionalAccountFee
 			INSERT @ClosingAccountStateMovement
 			VALUES (
@@ -640,22 +654,83 @@ BEGIN
 				, @IdMovementType
 				, @IdAccountState
 				, @IdPhysicalCard
-				, @MOVEMENT_TYPE_SERVICES
+				, @ADDITIONAL_ACCOUNT_SERVICES_RULE
 				, @ActualDate
-				, @MasterAccountFee
+				, @AdditionalAccountFee
 				, @REFERENCE
 				, @CurrentBalance
 			)
 
-			-- Inserting additional account service fee 
+			-- Inserting fraud insurance servise fee movement
+			SET @CurrentBalance = @CurrentBalance - @FraudInsuranceFee
+			INSERT @ClosingAccountStateMovement
+			VALUES (
+				@IdMasterAccount
+				, @IdMovementType
+				, @IdAccountState
+				, @IdPhysicalCard
+				, @FRAUD_INSURANCE_RULE
+				, @ActualDate
+				, @FraudInsuranceFee
+				, @REFERENCE
+				, @CurrentBalance
+			)
 
+			IF @QATMOperations > dbo.FNGetOperationsAmount(@IdAccountType,
+							@ATM_OPERATIONS_LIMIT_RULE)
+			BEGIN
+				-- Inserting over atm operations  charge movement
+				SET @CurrentBalance = @CurrentBalance - @ATMOverOperationsFEE
+				INSERT @ClosingAccountStateMovement
+				VALUES (
+					@IdMasterAccount
+					, @IdMovementType
+					, @IdAccountState
+					, @IdPhysicalCard
+					, @OVER_ATM_OPERATIONS_RULE
+					, @ActualDate
+					, @ATMOverOperationsFEE
+					, @REFERENCE
+					, @CurrentBalance
+				)
+			END
+
+			IF @QBrandOperations > dbo.FNGetOperationsAmount(@IdAccountType,
+							@BRAND_OPERATIONS_LIMIT_RULE)
+				BEGIN
+							-- Inserting fraud insurance servise fee movement
+				SET @CurrentBalance = @CurrentBalance - @BrandOverOperationsFee
+				INSERT @ClosingAccountStateMovement
+				VALUES (
+					@IdMasterAccount
+					, @IdMovementType
+					, @IdAccountState
+					, @IdPhysicalCard
+					, @OVER_BRAND_OPERATIONS_RULE
+					, @ActualDate
+					, @BrandOverOperationsFee
+					, @REFERENCE
+					, @CurrentBalance
+				)
+			END
+
+			INSERT @UpdatedAccountState
+			VALUES (
+				@IdAccountState 
+				, @CurrentBalance 
+				, @PreviousMinPayment 
+				, @AccruedCurrentInterest 
+				, @LatePaymentInterest 
+				, @BillingPeriod 
+				, @MinPaymentDueDate 
+			)
 		SET @ActualIndex = @ActualIndex + 1
 	END
 	
 
 
 
-	/*
+
 	-- Updating Master Account states 
 	UPDATE A
 	SET
@@ -695,6 +770,6 @@ BEGIN
 	FROM dbo.SubAccountState SAS
 	INNER JOIN  @ClosingDateAccountState CS 
 		ON SAS.IdAccountState = CS.IdAccountState;
-	*/
+
 	SELECT @ActualDate = DATEADD(DAY, 1, @ActualDate)
 END
