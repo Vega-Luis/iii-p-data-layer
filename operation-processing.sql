@@ -4,6 +4,7 @@ DECLARE
 	, @ActualRecord INT
 	, @LastRecord INT
 	, @ActualDate DATE
+	, @LastDate DATE
 	;
 
 -- Iteration variables
@@ -89,6 +90,21 @@ DECLARE @InputPhysicalCard TABLE (
 	, CVV INT
 )
 
+-- Expired physical card processing
+DECLARE
+	 @ExpiredPhysicalCardId INT
+	 , @RenewalFee MONEY
+	 , @IdBusinessRuleXAccountType INT
+	 , @IdBusinessRule INT
+	 ;
+
+-- Hold expired cards
+DECLARE @ExpiredPhysicalCard TABLE (
+	Sec INT IDENTITY(1,1)
+	, Id INT
+	, IdCreditCardAccount INT
+)
+
 -- Temp table to load operation tables from xml
 DECLARE @Dates TABLE (
 	Sec INT IDENTITY(1,1)
@@ -126,21 +142,21 @@ FROM @xmlData.nodes('root/fechaOperacion') AS T(Item)
 
 -- Setting iteration floor and ceil
 SELECT
-	@ActualRecord = MIN(D.[Sec])
-	, @LastRecord = MAX(D.[sec])
+	@ActualDate = MIN(D.OperationDate)
+	, @LastDate = MAX(D.OperationDate)
 FROM @Dates D
 
-
-WHILE (@ActualRecord <= @LastRecord)
+WHILE (@ActualDate <= @LastDate)
 BEGIN
-	-- Obtain actual operation date
+	/*-- Obtain actual operation date
 	SELECT @ActualDate = D.OperationDate
 	FROM @Dates D
 	WHERE D.Sec = @ActualRecord
+	*/
 	
 	-- Begins card holder operations
 	-- Clean table for new operation date
-	
+	/*
 	DELETE @InputCardHolder
 	
 	-- Preprocess new card holders
@@ -167,7 +183,7 @@ BEGIN
 		@ActualIndex = MIN(ICH.Sec)
 		, @LastIndex = MAX(ICH.Sec)
 	FROM @InputCardHolder ICH
-	/*
+	*//*
 	-- Begins insert iteration
 	WHILE (@ActualIndex <= @LastIndex)
 	BEGIN
@@ -219,7 +235,7 @@ BEGIN
 	END
 
 	-- Ends car holder operations 
-	*/
+	*//*
 	-- Begin Master account insertion
 	DELETE @InputMasterAccount
 
@@ -244,7 +260,7 @@ BEGIN
 		@ActualIndex = MIN(CTM.Sec)
 		, @LastIndex = MAX(CTM.Sec)
 	FROM @InputMasterAccount CTM
-	/*
+
 	WHILE (@ActualIndex <= @LastIndex)
 	BEGIN
 			SELECT 
@@ -301,7 +317,6 @@ BEGIN
 		SET @ActualIndex = @ActualIndex + 1
 	END
 	-- End Master account insertion
-	*/
 
 	-- Preprocess input additional accounts
 	
@@ -391,7 +406,7 @@ BEGIN
 		SET @ActualIndex = @ActualIndex + 1
 	END
 	-- ends additional account insertion
-	
+
 	-- Preprocessing input physical cards
 	INSERT INTO @InputPhysicalCard (
 		CardCode
@@ -414,7 +429,7 @@ BEGIN
 		@ActualIndex = MIN(IPC.Sec)
 		, @LastIndex = MAX(IPC.Sec)
 	FROM @InputPhysicalCard IPC
-	/*
+	
 	-- begins iteration, inserting into physical card table
 	WHILE (@ActualIndex <= @LastIndex)
 	BEGIN
@@ -455,5 +470,231 @@ BEGIN
 	END
 	
 	*/
-	SET @ActualRecord = @ActualRecord + 1;
+
+	-- Processing Account states
+	-- Account States that are in closing date
+	DECLARE @ClosingDateAccountState TABLE (
+		Sec INT IDENTITY(1,1)
+		, IdAccountState INT
+		, IdMasterAccount INT
+		, CurrentBalance MONEY
+		, PreviousMinPayment MONEY
+		, BillingPeriod DATE
+		, MinPaymentDueDate DATE
+		, AccruedCurrentInterest FLOAT
+		, LatePaymentInterest FLOAT
+		, QATMOperations INT
+		, QBrandOperations INT
+		, TotalPaymentsBeforeDueDate MONEY
+	)
+
+	DECLARE
+		@IdAccountState INT
+		, @IdMasterAccount INT
+		, @CurrentBalance MONEY
+		, @PreviousMinPayment MONEY
+		, @BillingPeriod DATE
+		, @MinPaymentDueDate DATE
+		, @LatePaymentInterest FLOAT
+		, @QATMOperations INT
+		, @QBrandOperations INT
+		, @TotalPaymentsBeforeDueDate MONEY
+		;
+
+
+
+	-- Insert into temp table on date closing account states
+	INSERT @ClosingDateAccountState
+	SELECT
+   		CS.Id
+		, CS.IdMasterAccount
+   		, CS.CurrentBalance
+   		, CS.PreviousMinPayment
+   		, CS.BillingPeriod
+   		, CS.MinPaymentDueDate
+   		, CS.AccruedCurrentInterest
+   		, CS.LatePaymentInterest
+   		, CS.QATMOperations
+   		, CS.QBrandOperations
+   		, CS.TotalPaymentsBeforeDueDate
+	FROM dbo.AccountState CS
+    INNER JOIN dbo.CreditCardAccount CCA
+	ON CCA.Id = CS.IdMasterAccount
+	AND DATEPART(DAY, CCA.CreationDate) = DATEPART(DAY, @ActualDate)
+	
+	-- Obtaining loop index
+	SELECT
+		 @ActualIndex = MIN(CS.Sec)
+		 , @LastIndex = MAX(CS.Sec)
+	FROM @ClosingDateAccountState CS
+	
+	DECLARE @UpdatedAccountState TABLE (
+		Sec INT IDENTITY(1,1)
+		, IdAccountState INT
+		, CurrentBalance MONEY
+		, PreviousMinPayment MONEY
+		, AccruedCurrentInterest FLOAT
+		, LatePaymentInterest FLOAT
+		, BillingPeriod DATE
+		, MinPaymentDueDate DATE
+	)
+
+	DECLARE @ClosingAccountStateMovement TABLE (
+		IdMasterAccount INT
+		, IdMovementType INT
+		, IdPhysicalCard INT
+		, [Description] VARCHAR(64)
+		, [Date] DATE
+		, Amount MONEY
+		, Reference VARCHAR(64)
+		, NewBalance MONEY
+	)
+
+	-- Go through every record
+	WHILE (@ActualIndex <= @LastIndex)
+	BEGIN
+		-- GET AccountState records on actual index
+		SELECT
+			@IdAccountState = CS.IdAccountState
+			, @IdMasterAccount = CS.IdMasterAccount
+			, @CurrentBalance = CS.CurrentBalance
+			, @PreviousMinPayment = CS.PreviousMinPayment
+			, @BillingPeriod = CS.BillingPeriod
+			, @MinPaymentDueDate = CS.MinPaymentDueDate
+			, @LatePaymentInterest = CS.LatePaymentInterest
+			, @AccruedCurrentInterest = CS.AccruedCurrentInterest
+			, @QATMOperations = CS.QATMOperations
+			, @QBrandOperations = CS.QBrandOperations
+			, @TotalPaymentsBeforeDueDate = CS.TotalPaymentsBeforeDueDate
+		FROM @ClosingDateAccountState CS
+
+		DECLARE
+			@MasterAccountFee MONEY
+			, @AdditionalAccountFee MONEY
+			, @FraudInsuranceFee MONEY
+			, @ATMOverOperationsFEE MONEY
+			, @BrandOverOperationsFee MONEY
+			, @IdMovementType INT
+			, @MOVEMENT_TYPE_SERVICES  VARCHAR(64) = 'Cargos por Servicio'
+			, @MASTER_ACCOUNT_SERVICES_RULE VARCHAR(64) = 'Cargos Servicio Mensual CTM'
+			, @ADDITIONAL_ACCOUNT_SERVICES_RULE VARCHAR(64) = 'Cargos Servicio Mensual CTA'
+			, @FRAUD_INSURANCE_RULE VARCHAR(64) = 'Cargo Seguro Contra Fraudes'
+			, @OVER_ATM_OPERATIONS_RULE VARCHAR(64) = 'Multa exceso de operaciones ATM'
+			, @OVER_BRAND_OPERATIONS_RULE VARCHAR(64) = 'Multa exceso de operaciones Ventanilla'
+			, @REFERENCE VARCHAR(64) = 'Closing Account State'
+			, @QAdditionalAccounts INT
+			;
+
+			-- Get total additional accounts
+			SELECT @TotalAdditionalAccount = COUNT(AA.IdCreditCardAccount)
+			FROM dbo.AdditionalAccount AA
+			WHERE AA.IdMasterAccount = @MasterAccountId
+
+			-- Get account type id
+			SELECT @IdAccountType = T.Id
+			FROM dbo.AccountType T
+			INNER JOIN dbo.MasterAccount M
+				ON M.IdAccountType = T.Id
+
+			-- Getting master account service fee from business rule
+			SET @MasterAccountFee = dbo.FNGetMonetaryAmount(@IdAccountType,
+							@MASTER_ACCOUNT_SERVICES_RULE)
+			-- Getting additional account service fee from business rule
+			SET @AdditionalAccountFee = dbo.FNGetMonetaryAmount(@IdAccountType,
+							@ADDITIONAL_ACCOUNT_SERVICES_RULE)
+			SET @AdditionalAccountFee = @AdditionalAccountFee * @QAdditionalAccounts
+			-- Getting insurance service fee from business rule
+			SET @FraudInsuranceFee = dbo.FNGetMonetaryAmount(@IdAccountType,
+							@FRAUD_INSURANCE_RULE) 
+			-- Getting over atm operations charge from business rule
+			SET @ATMOverOperationsFEE = dbo.FNGetMonetaryAmount(@IdAccountType,
+							@OVER_ATM_OPERATIONS_RULE)
+			-- Getting over atm operations charge from business rule
+			SET @BrandOverOperationsFee = dbo.FNGetMonetaryAmount(@IdAccountType,
+							@OVER_BRAND_OPERATIONS_RULE)
+
+			-- Inserting master account service fee movement
+
+			-- Gettting movement type id
+			SET @IdMovementType = dbo.FNGetMovementTypeId(@MOVEMENT_TYPE_SERVICES)
+
+			SET @CurrentBalance = @CurrentBalance - @MasterAccountFee
+			INSERT @ClosingAccountStateMovement
+			VALUES (
+				@IdMasterAccount
+				, @IdMovementType
+				, @IdAccountState
+				, @IdPhysicalCard
+				, @MOVEMENT_TYPE_SERVICES
+				, @ActualDate
+				, @MasterAccountFee
+				, @REFERENCE
+				, @CurrentBalance
+			)
+
+			-- Inserting additional account servise fee
+			SET @CurrentBalance = @CurrentBalance - @AdditionalAccountFee
+			INSERT @ClosingAccountStateMovement
+			VALUES (
+				@IdMasterAccount
+				, @IdMovementType
+				, @IdAccountState
+				, @IdPhysicalCard
+				, @MOVEMENT_TYPE_SERVICES
+				, @ActualDate
+				, @MasterAccountFee
+				, @REFERENCE
+				, @CurrentBalance
+			)
+
+			-- Inserting additional account service fee 
+
+		SET @ActualIndex = @ActualIndex + 1
+	END
+	
+
+
+
+	/*
+	-- Updating Master Account states 
+	UPDATE A
+	SET
+		A.CurrentBalance = T.CurrentBalance
+		, A.PreviousMinPayment = T.PreviousMinPayment
+		, A.BillingPeriod = T.BillingPeriod
+		, A.MinPaymentDueDate = T.MinPaymentDueDate
+		, A.AccruedCurrentInterest = T.AccruedCurrentInterest
+		, A.LatePaymentInterest = T.LatePaymentInterest
+		, A.QATMOperations = 0              
+		, A.QBrandOperations = 0
+		, A.TotalPaymentsBeforeDueDate = 0
+		, A.TotalPaymentsDuringMonth = 0
+		, A.QPaymentsDuringMonth = 0
+		, A.TotalPurchases = 0
+		, A.QPurchases = 0
+		, A.TotalWithdrawals = 0
+		, A.QWithdrawals = 0
+		, A.TotalCredits = 0
+		, A.QCredits = 0
+		, A.TotalDebits = 0
+		, A.QDebits = 0
+	FROM dbo.AccountState A
+	INNER JOIN  @UpdatedAccountState T ON A.id = T.IdAccountState;
+	
+	-- Updating Additional Accounts States
+	UPDATE SAS
+	SET
+		SAS.QATMOperations = 0              
+		, SAS.QBrandOperations = 0
+		, SAS.TotalPurchases = 0
+		, SAS.QPurchases = 0
+		, SAS.TotalWithdrawals = 0
+		, SAS.QWithdrawals = 0
+		, SAS.TotalCredits = 0
+		, SAS.TotalDebits = 0
+	FROM dbo.SubAccountState SAS
+	INNER JOIN  @ClosingDateAccountState CS 
+		ON SAS.IdAccountState = CS.IdAccountState;
+	*/
+	SELECT @ActualDate = DATEADD(DAY, 1, @ActualDate)
 END
