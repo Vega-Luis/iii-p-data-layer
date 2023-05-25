@@ -103,6 +103,10 @@ DECLARE
 	, @IdMovementType INT
 	, @IdPhysicalCard INT
 	, @IdSubAccountState INT
+	--Variable for Updates
+	, @CurrentBalance MONEY
+	, @QPaymentsDuringMonth INT
+	, @MinPaymentDueDate DATE
 
 DECLARE @InputMovement TABLE(
 	Sec INT IDENTITY(1,1)
@@ -116,8 +120,7 @@ DECLARE @InputMovement TABLE(
 
 -- AccountState update variables
 	DECLARE
-		@CurrentBalance MONEY = 0
-		, @QATMOperations INT = 0
+		 @QATMOperations INT = 0
 		, @QBrandOperations INT = 0
 		, @TotalPaymentsBeforeDueDate MONEY = 0
 		, @TotalPaymentsDuringMonth MONEY = 0
@@ -519,9 +522,25 @@ BEGIN
 		, @LastIndex = MAX(M.Sec)
 	FROM @InputMovement M
 
+
 	-- Beggins insertion iteration
 	WHILE (@ActualIndex <= @LastIndex)
 	BEGIN
+		SET @TotalPurchases = 0;
+		SET @QPurchases = 0;
+		SET @TotalDebits = 0;
+		SET @QDebits = 0;
+		SET @QBrandOperations = 0;
+		SET @TotalWithdrawals = 0;
+		SET @QWithdrawals = 0;
+		SET @QATMOperations = 0;
+		SET @CurrentBalance = 0;
+		SET @TotalPaymentsDuringMonth = 0;
+		SET @TotalPaymentsBeforeDueDate = 0;
+		SET @QPaymentsDuringMonth = 0;
+		SET @TotalCredits = 0;
+		SET @QCredits = 0;
+		
 		-- Obtains @InputMovement record in position @ActualIndex
 		SELECT
 			@MovementName = IMO.MovementName
@@ -563,13 +582,12 @@ BEGIN
 		FROM dbo.MovementType MT
 		WHERE MT.[Name] = @MovementName
 
-		--Get account state id
+		--Get account state id and min due date
 		SELECT TOP 1 @IdAccountState = AST.Id
+					, @MinPaymentDueDate = AST.MinPaymentDueDate
 		FROM dbo.AccountState AST
 		WHERE AST.IdMasterAccount = @MasterAccountId
 		ORDER BY BillingPeriod DESC
-
-		PRINT CONCAT(@MasterAccountId, '*************************************************************');
 
 		--Get Action
 		SELECT @Action = MT.[Name]
@@ -580,7 +598,92 @@ BEGIN
 		SELECT @Balance = MA.Balance
 		FROM dbo.MasterAccount MA
 		WHERE MA.IdCreditCardAccount = @MasterAccountId
-		
+
+		-- Preprocess updates
+		IF @MovementName = 'Compra'
+			BEGIN 
+				SET @TotalPurchases = @TotalPurchases + @Amount
+				SET @QPurchases = @QPurchases + 1
+				SET @TotalDebits = @TotalDebits + @Amount
+				SET @QDebits = @QDebits + 1
+			END
+		IF @MovementName = 'Retiro en Ventana'
+			BEGIN 
+				SET @QBrandOperations = @QBrandOperations + 1
+				SET @TotalWithdrawals = @TotalWithdrawals + @Amount
+				SET @QWithdrawals = @QWithdrawals + 1
+				SET @TotalDebits = @TotalDebits + @Amount
+				SET @QDebits = @QDebits + 1
+			END
+		IF @MovementName = 'Retiro en ATM'
+			BEGIN 
+				SET @QATMOperations = @QATMOperations + 1
+				SET @TotalWithdrawals = @TotalWithdrawals + @Amount
+				SET @QWithdrawals = @QWithdrawals + 1
+				SET @TotalDebits = @TotalDebits + @Amount
+				SET @QDebits = @QDebits + 1
+			END
+		IF @MovementName = 'Pago en ATM'
+			BEGIN 
+				SET @QATMOperations = @QATMOperations + 1
+				SET @CurrentBalance = @CurrentBalance + @Amount
+				SET @TotalPaymentsDuringMonth = @TotalPaymentsDuringMonth + @Amount
+				SET @TotalPaymentsBeforeDueDate = @TotalPaymentsBeforeDueDate + 
+						CASE WHEN @MinPaymentDueDate < @ActualDate THEN @Amount ELSE 0 END
+				SET @QPaymentsDuringMonth = @QPaymentsDuringMonth + 1
+				SET @TotalCredits = @TotalCredits + @Amount
+				SET @QCredits = @QCredits + 1
+			END
+		IF @MovementName = 'Pago en Ventana'
+			BEGIN 
+				SET @QBrandOperations = @QBrandOperations + 1
+				SET @CurrentBalance = @CurrentBalance + @Amount
+				SET @TotalPaymentsDuringMonth = @TotalPaymentsDuringMonth + @Amount
+				SET @TotalPaymentsBeforeDueDate = @TotalPaymentsBeforeDueDate + 
+						CASE WHEN @MinPaymentDueDate < @ActualDate THEN @Amount ELSE 0 END
+				SET @QPaymentsDuringMonth = @QPaymentsDuringMonth + 1
+				SET @TotalCredits = @TotalCredits + @Amount
+				SET @QCredits = @QCredits + 1
+			END
+		IF @MovementName = 'Pago en Línea'
+			BEGIN 
+				SET @CurrentBalance = @CurrentBalance + @Amount
+				SET @TotalPaymentsDuringMonth = @TotalPaymentsDuringMonth + @Amount
+				SET @QPaymentsDuringMonth = @QPaymentsDuringMonth + 1
+				SET @TotalPaymentsBeforeDueDate = @TotalPaymentsBeforeDueDate + 
+						CASE WHEN @MinPaymentDueDate < @ActualDate THEN @Amount ELSE 0 END
+			END
+
+		-- If is an Additional account
+		-- get IdSubAccountState
+		SELECT @IdSubAccountState = SAS.Id
+		FROM dbo.SubAccountState SAS
+		WHERE SAS.IdAccountState = @IdAccountState
+
+		IF @IsMaster = 0
+		BEGIN
+			IF @MovementName = 'Compra'
+			BEGIN 
+				SET @TotalPurchases = @TotalPurchases + @Amount
+				SET @QPurchases = @QPurchases + 1
+				SET @TotalDebits = @TotalDebits + @Amount
+			END
+			IF @MovementName = 'Retiro en Ventana'
+			BEGIN 
+				SET @QBrandOperations = @QBrandOperations + 1
+				SET @TotalWithdrawals = @TotalWithdrawals + @Amount
+				SET @QWithdrawals = @QWithdrawals + 1
+				SET @TotalDebits = @TotalDebits + @Amount
+
+			END
+			IF @MovementName = 'Retiro en ATM'
+			BEGIN 
+				SET @QATMOperations = @QATMOperations + 1
+				SET @TotalWithdrawals = @TotalWithdrawals + @Amount
+				SET @QWithdrawals = @QWithdrawals + 1
+				SET @TotalDebits = @TotalDebits + @Amount
+			END
+		END
 		-- Suspecious movement insertion
 		IF dbo.FNIsExpired(@ExpirationYear, @ExpirationMonth, @ActualDate) = 1
 		BEGIN
@@ -640,113 +743,39 @@ BEGIN
 		WHERE IdMasterAccount = @MasterAccountId
 
 		-- Always execute
-		IF @MovementName = 'Compra'
-			BEGIN 
-				UPDATE dbo.AccountState
-				SET TotalPurchases = TotalPurchases + @Amount
-					, QPurchases = QPurchases + 1
-					, TotalDebits = TotalDebits - @Amount
-					, QDebits = QDebits + 1
-				WHERE Id = @IdAccountState
-			END
-			IF @MovementName = 'Retiro Ventana'
-			BEGIN 
-				UPDATE dbo.AccountState
-				SET  QBrandOperations = QBrandOperations + 1
-					, TotalWithdrawals = TotalWithdrawals + @Amount
-					, QWithdrawals = QWithdrawals + 1
-					, TotalDebits = TotalDebits - @Amount
-					, QDebits = QDebits + 1
-				WHERE Id = @IdAccountState
-			END
-			IF @MovementName = 'Retiro ATM'
-			BEGIN 
-				UPDATE dbo.AccountState
-				SET  QATMOperations = QATMOperations + 1
-					, TotalWithdrawals = TotalWithdrawals + @Amount
-					, QWithdrawals = QWithdrawals + 1
-					, TotalDebits = TotalDebits - @Amount
-					, QDebits = QDebits + 1
-				WHERE Id = @IdAccountState
-			END
-			IF @MovementName = 'Pago ATM'
-			BEGIN 
-				UPDATE dbo.AccountState
-				SET  QATMOperations = QATMOperations + 1
-					, CurrentBalance = CurrentBalance + @Amount
-					, TotalPaymentsDuringMonth = TotalPaymentsDuringMonth + @Amount
-					, TotalPaymentsBeforeDueDate = TotalPaymentsBeforeDueDate + 
-						CASE WHEN MinPaymentDueDate < @ActualDate THEN @Amount ELSE 0 END
-					, QPaymentsDuringMonth = QPaymentsDuringMonth + 1
-					, TotalCredits = TotalCredits + @Amount
-					, QCredits = QCredits + 1
-				WHERE Id = @IdAccountState
-			END
-			IF @MovementName = 'Pago Ventana'
-			BEGIN 
-				UPDATE dbo.AccountState
-				SET  QBrandOperations = QBrandOperations + 1
-					, CurrentBalance = CurrentBalance + @Amount
-					, TotalPaymentsDuringMonth = TotalPaymentsDuringMonth + @Amount
-					, TotalPaymentsBeforeDueDate = TotalPaymentsBeforeDueDate + 
-						CASE WHEN MinPaymentDueDate < @ActualDate THEN @Amount ELSE 0 END
-					, QPaymentsDuringMonth = QPaymentsDuringMonth + 1
-					, TotalCredits = TotalCredits + @Amount
-					, QCredits = QCredits + 1
-				WHERE Id = @IdAccountState
-			END
-			IF @MovementName = 'Pago en Línea'
-			BEGIN 
-				UPDATE dbo.AccountState
-				SET
-					CurrentBalance = CurrentBalance + @Amount,
-					TotalPaymentsDuringMonth = TotalPaymentsDuringMonth + @Amount,
-					QPaymentsDuringMonth = QPaymentsDuringMonth + 1,
-					TotalPaymentsBeforeDueDate = TotalPaymentsBeforeDueDate + 
-						CASE WHEN MinPaymentDueDate < @ActualDate THEN @Amount ELSE 0 END
-				WHERE Id = @IdAccountState
-			END
-		-- If is an Additional account
-		-- get IdSubAccountState
-		SELECT @IdSubAccountState = SAS.Id
-		FROM dbo.SubAccountState SAS
-		WHERE SAS.IdAccountState = @IdAccountState
+		UPDATE dbo.AccountState
+		SET  TotalPurchases = TotalPurchases + @TotalPurchases 
+			, QPurchases = QPurchases + @QPurchases 
+			, TotalDebits = TotalDebits + @TotalDebits
+			, QDebits = QDebits + @QDebits
+			, QBrandOperations = QBrandOperations + @QBrandOperations
+			, TotalWithdrawals = TotalWithdrawals + @TotalWithdrawals
+			, QWithdrawals = QWithdrawals + @QWithdrawals
+			, QATMOperations = QATMOperations + @QATMOperations
+			, CurrentBalance = CurrentBalance + @CurrentBalance
+			, TotalPaymentsDuringMonth = TotalPaymentsDuringMonth + @TotalPaymentsDuringMonth
+			, TotalPaymentsBeforeDueDate = TotalPaymentsBeforeDueDate + @TotalPaymentsBeforeDueDate
+			, QPaymentsDuringMonth = QPaymentsDuringMonth + @QPaymentsDuringMonth
+			, TotalCredits = TotalCredits + @TotalCredits
+			, QCredits = QCredits + @QCredits
+		WHERE Id = @IdAccountState
 
-		IF @IsMaster = 0
-		BEGIN
-			IF @MovementName = 'Compra'
-			BEGIN 
-				UPDATE dbo.SubAccountState
-				SET TotalPurchases = TotalPurchases + @Amount
-					, QPurchases = QPurchases + 1
-					, TotalDebits = TotalDebits - @Amount
-				WHERE Id = @IdSubAccountState
-			END
-			IF @MovementName = 'Retiro Ventana'
-			BEGIN 
-				UPDATE dbo.SubAccountState
-				SET  QBrandOperations = QBrandOperations + 1
-					, TotalWithdrawals = TotalWithdrawals + @Amount
-					, QWithdrawals = QWithdrawals + 1
-					, TotalDebits = TotalDebits - @Amount
-				WHERE Id = @IdSubAccountState
-			END
-			IF @MovementName = 'Retiro ATM'
-			BEGIN 
-				UPDATE dbo.SubAccountState
-				SET  QATMOperations = QATMOperations + 1
-					, TotalWithdrawals = TotalWithdrawals + @Amount
-					, QWithdrawals = QWithdrawals + 1
-					, TotalDebits = TotalDebits - @Amount
-				WHERE Id = @IdSubAccountState
-			END
-		END
-
+		--UPDATE SubAccount State
+		UPDATE dbo.SubAccountState
+		SET TotalPurchases = TotalPurchases + @TotalPurchases
+			, QPurchases = QPurchases + @QPurchases
+			, TotalDebits = TotalDebits + @TotalDebits
+			, QBrandOperations = QBrandOperations + @QBrandOperations
+			, TotalWithdrawals = TotalWithdrawals + @TotalWithdrawals
+			, QWithdrawals = QWithdrawals + @QWithdrawals
+			, QATMOperations = QATMOperations + @QATMOperations
+		WHERE Id = @IdSubAccountState
+		AND @IsMaster = 0
+			
 		--Counter
 		SET @ActualIndex = @ActualIndex + 1
 	END
 	--End Movement insertion
 	--Counter Main While
 	SET @ActualRecord = @ActualRecord + 1;
-	SELECT @ActualDate
 END
