@@ -1,4 +1,4 @@
--- Returns the amonetary amount given the accountTypeId and BussinesRuleName
+-- Returns the rate amount given the accountTypeId and BussinesRuleName
 CREATE FUNCTION	dbo.FNGetRateInterest (
 	@inAccountTypeId INT
 	, @inBusinessRuleName VARCHAR(64)
@@ -22,7 +22,7 @@ BEGIN
 	AND T.Id = @inAccountTypeId
 
 	SELECT @outRate = R.Rate 
-	FROM dbo.AccountTypeXBusinessRuleMonetaryAmount R
+	FROM dbo.AccountTypeXBusinessRuleRate R
 	WHERE R.IdAccountTypeXBusinessRule = @AccountTypeXBusinessRuleId
 
 	RETURN @outRate
