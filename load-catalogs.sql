@@ -227,3 +227,37 @@ SELECT
 	, IIF(AccumulateATMOperation = 'SI', 1, 0)
 	, IIF(AccumulateWindowOperation = 'SI', 1, 0)
 FROM @TempMovementType
+
+-- Inserting data into interest movement type tables
+DECLARE @InputInterestMovementType TABLE (
+	[Name] VARCHAR(64)
+	, [Action] VARCHAR(8)
+)
+INSERT INTO @InputInterestMovementType (
+	[Name]
+	, [Action]
+)
+SELECT
+	T.Item.value('@Nombre', 'VARCHAR(64)')
+	, T.Item.value('@Accion', 'VARCHAR(8)')
+FROM @xmlData.nodes('root/TMTI/TMTI') AS T(Item)
+
+-- Inserting interest movement types into db
+INSERT INTO dbo.InterestMoratorMovementType (
+	[Name]
+	, [Action]
+)
+SELECT
+	IMT.[Name]
+	, IMT.[Action]
+FROM @InputInterestMovementType IMT
+
+-- Inserting interest movement types into db
+INSERT INTO dbo.CurrentInterestMovementType(
+	[Name]
+	, [Action]
+)
+SELECT
+	IMT.[Name]
+	, IMT.[Action]
+FROM @InputInterestMovementType IMT
