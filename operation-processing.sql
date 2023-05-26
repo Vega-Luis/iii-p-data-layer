@@ -107,6 +107,19 @@ DECLARE
 	, @CurrentBalance MONEY
 	, @QPaymentsDuringMonth INT
 	, @MinPaymentDueDate DATE
+	, @AccountTypeId INT
+	--Interest variables
+	, @RateInterestCurrent FLOAT
+	, @RateInterestMorator FLOAT
+	, @AmountDebitInterestCurrent MONEY
+	, @BalanceInterestCurrent MONEY
+	--Moratorium
+	, @AccruedDebitPenaultyInterest MONEY
+	, @AmountPaymentMinimumPenaulty MONEY
+	, @BalanceInterestPenaulty MONEY
+	--Variables to insert into interest tables
+	, @CurrentMovementTypeId INT
+	, @PenaultyMovementTypeId INT
 
 DECLARE @InputMovement TABLE(
 	Sec INT IDENTITY(1,1)
@@ -540,6 +553,9 @@ BEGIN
 		SET @QPaymentsDuringMonth = 0;
 		SET @TotalCredits = 0;
 		SET @QCredits = 0;
+
+		--Reset AmountDebitInterestCurrent
+		SET @AmountDebitInterestCurrent = 0
 		
 		-- Obtains @InputMovement record in position @ActualIndex
 		SELECT
@@ -581,10 +597,13 @@ BEGIN
 		SELECT @IdMovementType = MT.Id
 		FROM dbo.MovementType MT
 		WHERE MT.[Name] = @MovementName
+		
 
 		--Get account state id and min due date
 		SELECT TOP 1 @IdAccountState = AST.Id
 					, @MinPaymentDueDate = AST.MinPaymentDueDate
+					, @PreviousMinPayment = AST.PreviousMinPayment
+					, @TotalPaymentsBeforeDueDate =TotalPaymentsBeforeDueDate
 		FROM dbo.AccountState AST
 		WHERE AST.IdMasterAccount = @MasterAccountId
 		ORDER BY BillingPeriod DESC
@@ -596,8 +615,20 @@ BEGIN
 
 		--Get Balance
 		SELECT @Balance = MA.Balance
+				, @AccountTypeId = ATY.Id
 		FROM dbo.MasterAccount MA
+		INNER JOIN dbo.AccountType ATY
+		ON ATY.Id = MA.IdAccountType
 		WHERE MA.IdCreditCardAccount = @MasterAccountId
+
+		--Get Interest movement type;;;;duda con el @action
+		SELECT @CurrentMovementTypeId = CIMT.Id
+		FROM dbo.CurrentInterestMovementType CIMT
+		WHERE CIMT.Accion = @Action
+
+		SELECT @PenaultyMovementTypeId = PMT.Id
+		FROM dbo.CurrentInterestMovementType PMT
+		WHERE PMT.Accion = @Action
 
 		-- Preprocess updates
 		IF @MovementName = 'Compra'
@@ -684,6 +715,44 @@ BEGIN
 				SET @TotalDebits = @TotalDebits + @Amount
 			END
 		END
+		--Process interest
+
+		IF @MovementName = "Intereses Corrientes sobre Saldo"
+		AND @Balance > 0
+		BEGIN
+			SET @RateInterestCurrent = FNGetRateInterest(@AccountTypeId
+												, 'Tasa de interes corriente')
+			SET @AmountDebitInterestCurrent = @Balance /
+											@RateInterestCurrent /100/30
+
+			SET @BalanceInterestCurrent = @BalanceInterestCurrent +
+										@AmountDebitInterestCurrent
+
+			SET @TotalDebits = @TotalDebits +
+							@AmountDebitInterestCurrent
+		END
+
+		IF @MovementName = "Intereses Moratorios Pago no Realizado"
+		AND @ActualDate > MinPaymentDueDate
+		AND @TotalPaymentsBeforeDueDate < @PreviousMinPayment
+		AND DATEPART(dw, @ActualDate) != 1
+		BEGIN
+			SET @RateInterestMorator = FNGetRateInterest(@AccountTypeId
+												, 'intereses moratorios')
+			SET @AmountPaymentMinimumPenaulty = @PreviousMinPayment - 
+												@TotalPaymentsBeforeDueDate
+
+			SET @AccruedDebitPenaultyInterest = @AmountPaymentMinimumPenaulty /
+												@RateInterestMorator /100/30
+
+			SET @BalanceInterestPenaulty = @BalanceInterestPenaulty +
+										AccruedDebitPenaultyInterest
+
+			SET @TotalDebits = @TotalDebits +
+							@AccruedDebitPenaultyInterest
+		END
+
+		-- BEGIN TRANSACTION
 		-- Suspecious movement insertion
 		IF dbo.FNIsExpired(@ExpirationYear, @ExpirationMonth, @ActualDate) = 1
 		BEGIN
@@ -730,12 +799,50 @@ BEGIN
 				, @NewBalance
 			)
 		END
-		-- Process movements
+		--INSERT interest movements
+		IF @MovementName = "Intereses Corrientes sobre Saldo"
+		BEGIN
+		INSERT INTO dbo.CurrentInterestMovement(
+			IdMasterAccount
+			, IdCurrentMovementType
+			, [Date]
+			, Amount
+			, NewCurrentAccruedInterest
+		)
+		VALUES(
+			@MasterAccountId
+			, @CurrentMovementTypeId
+			, @ActualDate
+			, @AccruedDebitPenaultyInterest
+			, @RateInterestCurrent
+		)
+		END
+		IF @MovementName = "Intereses Moratorios Pago no Realizado"
+		BEGIN
+		INSERT INTO dbo.InterestMoratorMovement(
+			IdMasterAccount
+			, IdInterestMoratorMovementType
+			, [Date]
+			, Amount
+			, NewAccruedInterestMorator
+		)
+		VALUES(
+			@MasterAccountId
+			, @CurrentMovementTypeId
+			, @ActualDate
+			, @AccruedDebitPenaultyInterest
+			, @RateInterestMorator
+		)
+		END
+
+		-- UPDATE PROCESS
 
 		SET @Balance = dbo.FNCalculateNewBalance(@Amount, @Action, @Balance)
 
 		UPDATE dbo.MasterAccount 
 		SET Balance = @Balance
+			, AccruedCurrentInterest = AccruedCurrentInterest + @RateInterestCurrent
+			, AccruedPenaultyInterest = AccruedPenaultyInterest + @RateInterestMorator
 		WHERE IdCreditCardAccount = @MasterAccountId
 
 		UPDATE dbo.Movement
@@ -771,10 +878,11 @@ BEGIN
 			, QATMOperations = QATMOperations + @QATMOperations
 		WHERE Id = @IdSubAccountState
 		AND @IsMaster = 0
-			
+		
 		--Counter
 		SET @ActualIndex = @ActualIndex + 1
 	END
+
 	--End Movement insertion
 	--Counter Main While
 	SET @ActualRecord = @ActualRecord + 1;
