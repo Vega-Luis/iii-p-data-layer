@@ -764,56 +764,47 @@ BEGIN
 		BEGIN TRY
 		BEGIN TRANSACTION TProcessMovements
 			-- Suspecious movement insertion
-			IF dbo.FNIsExpired(@ExpirationYear, @ExpirationMonth, @ActualDate) = 1
-			BEGIN
-				INSERT INTO dbo.SuspiciousMovement(
-					IdMasterAccount
-					, IdPhysicalCard
-					, [Date]
-					, Amount
-					, [Description]
-					, [Reference]
-				)
-				VALUES(
-					@MasterAccountId
-					, @IdPhysicalCard
-					, @DateMovement
-					, @Amount
-					, @DescriptionMovement
-					, @Reference
-				)
-			END
-			ELSE
-			BEGIN
+			INSERT INTO dbo.SuspiciousMovement (
+				IdMasterAccount,
+				IdPhysicalCard,
+				[Date],
+				Amount,
+				[Description],
+				[Reference]
+			)
+			SELECT
+				@MasterAccountId,
+				@IdPhysicalCard,
+				@DateMovement,
+				@Amount,
+				@DescriptionMovement,
+				@Reference
+			WHERE dbo.FNIsExpired(@ExpirationYear, @ExpirationMonth, @ActualDate) = 1;
 			--Movements insertion
-				INSERT INTO dbo.Movement(
-					IdMasterAccount
-					, IdMovementType
-					, IdAccountState
-					, IdPhysicalCard
-					, [Date]
-					, Amount
-					, [Description]
-					, [Reference]
-					, NewBalance
-				)
-				VALUES(
-					@MasterAccountId
-					, @IdMovementType
-					, @IdAccountState
-					, @IdPhysicalCard
-					, @DateMovement
-					, @Amount
-					, @DescriptionMovement
-					, @Reference
-					, @NewBalance
-				)
-			END
-
+			INSERT INTO dbo.Movement(
+				IdMasterAccount
+				, IdMovementType
+				, IdAccountState
+				, IdPhysicalCard
+				, [Date]
+				, Amount
+				, [Description]
+				, [Reference]
+				, NewBalance
+			)
+			VALUES(
+				@MasterAccountId
+				, @IdMovementType
+				, @IdAccountState
+				, @IdPhysicalCard
+				, @DateMovement
+				, @Amount
+				, @DescriptionMovement
+				, @Reference
+				, @NewBalance
+			)
 
 			--INSERT interest movements
-			IF @MovementName = @CURRENT_INTEREST_BALANCE
-			BEGIN
 			INSERT INTO dbo.CurrentInterestMovement(
 				IdMasterAccount
 				, IdCurrentMovementType
@@ -821,16 +812,14 @@ BEGIN
 				, Amount
 				, NewCurrentAccruedInterest
 			)
-			VALUES(
+			SELECT
 				@MasterAccountId
 				, @CurrentMovementTypeId
 				, @ActualDate
 				, @AccruedDebitPenaultyInterest
 				, @RateInterestCurrent
-			)
-			END
-			IF @MovementName = @PENAULTY_INTEREST_BALANCE
-			BEGIN
+			WHERE @MovementName = @CURRENT_INTEREST_BALANCE
+
 			INSERT INTO dbo.InterestMoratorMovement(
 				IdMasterAccount
 				, IdInterestMoratorMovementType
@@ -838,14 +827,13 @@ BEGIN
 				, Amount
 				, NewAccruedInterestMorator
 			)
-			VALUES(
+			SELECT
 				@MasterAccountId
 				, @CurrentMovementTypeId
 				, @ActualDate
 				, @AccruedDebitPenaultyInterest
 				, @RateInterestMorator
-			)
-			END
+			WHERE @MovementName = @PENAULTY_INTEREST_BALANCE
 
 			-- UPDATE PROCESS
 
