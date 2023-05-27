@@ -4,6 +4,7 @@ DECLARE
 	, @ActualRecord INT
 	, @LastRecord INT
 	, @ActualDate DATE
+	, @LastDate DATE
 	;
 
 -- Iteration variables
@@ -41,8 +42,6 @@ DECLARE
 	, @IdCardHolder INT
 	, @IdAccountType INT
 	, @IdAccountState INT
-	, @AccruedCurrentInterest MONEY = 0
-	, @AccruedPenaultyInterest MONEY = 0
 
 Declare @InputMasterAccount TABLE(
 	Sec INT IDENTITY(1,1)
@@ -91,12 +90,19 @@ DECLARE @InputPhysicalCard TABLE (
 
 -- Movements insertion 
 DECLARE 
-	@MovementName VARCHAR(32)
+	@MovementName VARCHAR(64)
 	, @CodeTF VARCHAR(16)
 	, @DateMovement DATE
 	, @Amount MONEY
 	, @Reference VARCHAR(16)
+	--New TF
 	, @NewTFCode VARCHAR(16)
+	, @NewYear INT
+	, @NewMonth INT
+	, @NewCVV INT
+	, @MonetaryAmountPC MONEY
+	, @InvalidationMotiveId INT
+
 	, @NewBalance MONEY = 0
 	, @Action VARCHAR(16)
 	, @DescriptionMovement VARCHAR(32)
@@ -108,16 +114,17 @@ DECLARE
 	, @CurrentBalance MONEY
 	, @QPaymentsDuringMonth INT
 	, @MinPaymentDueDate DATE
+	, @PreviousMinPayment MONEY
 	, @AccountTypeId INT
 	--Interest variables
-	, @RateInterestCurrent FLOAT
-	, @RateInterestMorator FLOAT
+	, @RateInterestCurrent FLOAT 
+	, @RateInterestMorator FLOAT 
 	, @AmountDebitInterestCurrent MONEY
-	, @BalanceInterestCurrent MONEY
+	, @BalanceInterestCurrent MONEY = 0
 	--Moratorium
 	, @AccruedDebitPenaultyInterest MONEY
 	, @AmountPaymentMinimumPenaulty MONEY
-	, @BalanceInterestPenaulty MONEY
+	, @BalanceInterestPenaulty MONEY = 0
 	--Variables to insert into interest tables
 	, @CurrentMovementTypeId INT
 	, @PenaultyMovementTypeId INT
@@ -129,10 +136,18 @@ DECLARE
 	, @CURRENT_INTEREST_BALANCE VARCHAR(32) = 'Intereses Corrientes sobre Saldo'
 	, @PENAULTY_INTEREST_BALANCE VARCHAR(32) = 'Intereses Moratorios Pago no Realizado'
 
+	, @RENEWAL_FEE_CTM_RULE VARCHAR(32) = 'Cargo renovacion de TF de CTM'
+	, @RENEWAL_FEE_CTA_RULE VARCHAR(32) = 'Cargo renovacion de TF de CTA'
+	, @REPLACEMENT_FEE_CTM_RULE VARCHAR(32) = 'Reposicion de tarjeta de CTM'
+	, @REPLACEMENT_FEE_CTA_RULE VARCHAR(32) = 'Reposicion de tarjeta de CTA'
+
+	, @MOVEMENT_TYPE_RECOVERY_LOST VARCHAR(32) = 'Recuperacion por Perdida'
+	, @MOVEMENT_TYPE_RECOVERY_THEFT VARCHAR(32) = 'Recuperacion por Robo'
+	, @MOVEMENT_TYPE_RENEWAL_TF VARCHAR(32) = 'Renovacion de TF'
 
 DECLARE @InputMovement TABLE(
 	Sec INT IDENTITY(1,1)
-	, [MovementName] VARCHAR(32)
+	, [MovementName] VARCHAR(64)
 	, CodeTF VARCHAR(16)
 	, DateMovement DATE
 	, Amount MONEY
@@ -193,17 +208,22 @@ FROM @xmlData.nodes('root/fechaOperacion') AS T(Item)
 
 -- Setting iteration floor and ceil
 SELECT
-	@ActualRecord = MIN(D.[Sec])
-	, @LastRecord = MAX(D.[sec])
+	@ActualDate = MIN(D.OperationDate)
+	, @LastDate = MAX(D.OperationDate)
 FROM @Dates D
 
-
-WHILE (@ActualRecord <= @LastRecord)
+SET NOCOUNT ON;
+WHILE (@ActualDate <= @LastDate)
 BEGIN
+	IF	EXISTS (
+		SELECT 1
+		FROM @Dates D
+		WHERE D.OperationDate = @ActualDate)
+	BEGIN
 	-- Obtain actual operation date
-	SELECT @ActualDate = D.OperationDate
-	FROM @Dates D
-	WHERE D.Sec = @ActualRecord
+	--SELECT @ActualDate = D.OperationDate
+	--FROM @Dates D
+	--WHERE D.Sec = @ActualRecord
 	
 	-- Begins card holder operations
 	-- Clean table for new operation date
@@ -287,7 +307,7 @@ BEGIN
 
 	-- Ends car holder operations 
 	*/
-	/*
+
 	-- Begin Master account insertion
 	DELETE @InputMasterAccount
 
@@ -312,7 +332,7 @@ BEGIN
 		@ActualIndex = MIN(CTM.Sec)
 		, @LastIndex = MAX(CTM.Sec)
 	FROM @InputMasterAccount CTM
-	*//*
+	/*
 	WHILE (@ActualIndex <= @LastIndex)
 	BEGIN
 		SELECT 
@@ -362,9 +382,6 @@ BEGIN
 			, @IdCardHolder
 			, @IdAccountType
 			, @CreditLimit
-			, @Balance
-			, @AccruedCurrentInterest
-			, @AccruedPenaultyInterest
 		)
 
 		INSERT INTO dbo.AccountState(
@@ -379,7 +396,8 @@ BEGIN
 		)
 
 		SET @ActualIndex = @ActualIndex + 1
-	END*/
+	END
+	*/
 	-- End Master account insertion
 	
 
@@ -529,7 +547,7 @@ BEGIN
 		, [NewTFCode]
 	)
 	SELECT
-		M.Item.value('@Nombre', 'VARCHAR(32)')
+		M.Item.value('@Nombre', 'VARCHAR(64)')
 		, M.Item.value('@TF', 'VARCHAR(16)')
 		, M.Item.value('@FechaMovimiento', 'DATE')
 		, M.Item.value('@Monto', 'MONEY')
@@ -547,8 +565,9 @@ BEGIN
 		, @LastIndex = MAX(M.Sec)
 	FROM @InputMovement M
 
-
+	
 	-- Beggins insertion iteration
+	
 	WHILE (@ActualIndex <= @LastIndex)
 	BEGIN
 		SET @TotalPurchases = 0;
@@ -583,10 +602,10 @@ BEGIN
 
 		--Get Physical card, Get Expiration date
 		SELECT
-				@IdPhysicalCard = PC.Id
-				, @IdCreditCardAccount = PC.IdCreditCardAccount
-				, @ExpirationYear = PC.ExpirationYear
-				, @ExpirationMonth = PC.ExpirationMonth		
+			@IdPhysicalCard = PC.Id
+			, @IdCreditCardAccount = PC.IdCreditCardAccount
+			, @ExpirationYear = PC.ExpirationYear
+			, @ExpirationMonth = PC.ExpirationMonth		
 		FROM dbo.PhysicalCard PC
 		WHERE PC.Code = @CodeTF
 
@@ -631,15 +650,16 @@ BEGIN
 		ON ATY.Id = MA.IdAccountType
 		WHERE MA.IdCreditCardAccount = @MasterAccountId
 
-		--Get Interest movement type;;;;duda con el @action
+		--Get Interest movement type;;;;duda con el @action no va
 		SELECT @CurrentMovementTypeId = CIMT.Id
 		FROM dbo.CurrentInterestMovementType CIMT
-		WHERE CIMT.Accion = @ACTION_SUM
+		WHERE CIMT.[Action] = @ACTION_SUM
 
-		SELECT @PenaultyMovementTypeId = PMT.Id
-		FROM dbo.CurrentInterestMovementType PMT
-		WHERE PMT.Accion = @ACTION_SUB
+		SELECT @PenaultyMovementTypeId = IMMT.Id
+		FROM dbo.InterestMoratorMovementType IMMT
+		WHERE IMMT.[Action] = @ACTION_SUB
 
+		SET @InvalidationMotiveId = 1
 		-- Preprocess updates
 		IF @MovementName = 'Compra'
 			BEGIN 
@@ -724,30 +744,70 @@ BEGIN
 				SET @QWithdrawals = @QWithdrawals + 1
 				SET @TotalDebits = @TotalDebits + @Amount
 			END
+			-- For new TF additional account
+			IF @MovementName = @MOVEMENT_TYPE_RECOVERY_LOST 
+			OR @MovementName = @MOVEMENT_TYPE_RECOVERY_THEFT
+				BEGIN
+					SET @NewYear = DATEPART(YEAR, DATEADD(YEAR, 1, @ActualDate));
+					SET @NewMonth = DATEPART(MONTH, @ActualDate);
+					SET @NewCVV = CAST((RAND() * 9000) + 1000 AS INT);
+					SET @MonetaryAmountPC = dbo.FNGetMonetaryAmount(@AccountTypeId
+																	, @REPLACEMENT_FEE_CTA_RULE)
+					SET @TotalDebits = @TotalDebits + @MonetaryAmountPC
+				END
+			IF @MovementName = @MOVEMENT_TYPE_RENEWAL_TF
+				BEGIN
+					SET @NewYear = DATEPART(YEAR, DATEADD(YEAR, 1, @ActualDate));
+					SET @NewMonth = DATEPART(MONTH, @ActualDate);
+					SET @NewCVV = CAST((RAND() * 9000) + 1000 AS INT);
+					SET @MonetaryAmountPC = dbo.FNGetMonetaryAmount(@AccountTypeId
+																	, @RENEWAL_FEE_CTA_RULE)
+					SET @TotalDebits = @TotalDebits + @MonetaryAmountPC
+				END
 		END
-		--Process interest
 
-		IF @MovementName = "Intereses Corrientes sobre Saldo"
+		-- For new TF Master account
+		IF @MovementName = @MOVEMENT_TYPE_RECOVERY_LOST 
+			OR @MovementName = @MOVEMENT_TYPE_RECOVERY_THEFT
+				BEGIN
+					SET @NewYear = DATEPART(YEAR, DATEADD(YEAR, 1, @ActualDate));
+					SET @NewMonth = DATEPART(MONTH, @ActualDate);
+					SET @NewCVV = CAST((RAND() * 9000) + 1000 AS INT);
+					SET @MonetaryAmountPC = dbo.FNGetMonetaryAmount(@AccountTypeId
+																	, @REPLACEMENT_FEE_CTM_RULE)
+					SET @TotalDebits = @TotalDebits + @MonetaryAmountPC
+				END
+			IF @MovementName = @MOVEMENT_TYPE_RENEWAL_TF
+				BEGIN
+					SET @NewYear = DATEPART(YEAR, DATEADD(YEAR, 1, @ActualDate));
+					SET @NewMonth = DATEPART(MONTH, @ActualDate);
+					SET @NewCVV = CAST((RAND() * 9000) + 1000 AS INT);
+					SET @MonetaryAmountPC = dbo.FNGetMonetaryAmount(@AccountTypeId
+																	, @RENEWAL_FEE_CTM_RULE)
+					SET @TotalDebits = @TotalDebits + @MonetaryAmountPC
+		END
+
+		--Process interest
+		IF @MovementName = 'Intereses Corrientes sobre Saldo'
 		AND @Balance > 0
 		BEGIN
-			SET @RateInterestCurrent = FNGetRateInterest(@AccountTypeId
+			SET @RateInterestCurrent = dbo.FNGetRateInterest(@AccountTypeId
 												, 'Tasa de interes corriente')
 			SET @AmountDebitInterestCurrent = @Balance /
 											@RateInterestCurrent /100/30
 
 			SET @BalanceInterestCurrent = @BalanceInterestCurrent +
 										@AmountDebitInterestCurrent
-
 			SET @TotalDebits = @TotalDebits +
 							@AmountDebitInterestCurrent
 		END
 
-		IF @MovementName = "Intereses Moratorios Pago no Realizado"
-		AND @ActualDate > MinPaymentDueDate
+		IF @MovementName = 'Intereses Moratorios Pago no Realizado'
+		AND @ActualDate > @MinPaymentDueDate
 		AND @TotalPaymentsBeforeDueDate < @PreviousMinPayment
 		AND DATEPART(dw, @ActualDate) != 1
 		BEGIN
-			SET @RateInterestMorator = FNGetRateInterest(@AccountTypeId
+			SET @RateInterestMorator = dbo.FNGetRateInterest(@AccountTypeId
 												, 'intereses moratorios')
 			SET @AmountPaymentMinimumPenaulty = @PreviousMinPayment - 
 												@TotalPaymentsBeforeDueDate
@@ -756,30 +816,62 @@ BEGIN
 												@RateInterestMorator /100/30
 
 			SET @BalanceInterestPenaulty = @BalanceInterestPenaulty +
-										AccruedDebitPenaultyInterest
+										@AccruedDebitPenaultyInterest
 
 			SET @TotalDebits = @TotalDebits +
 							@AccruedDebitPenaultyInterest
 		END
 		BEGIN TRY
 		BEGIN TRANSACTION TProcessMovements
+			IF @NewTFCode != ''
+			BEGIN
+				INSERT INTO dbo.PhysicalCard(
+					IdCreditCardAccount
+					, IdInvalidationMotive
+					, Code
+					, ExpirationYear
+					, ExpirationMonth
+					, CVV
+					, CreationDate
+				)
+				VALUES(
+					@IdCreditCardAccount
+					, @InvalidationMotiveId
+					, @NewTFCode
+					, @ExpirationYear
+					, @ExpirationMonth
+					, @NewCVV
+					, @ActualDate
+				)
+				UPDATE PC
+				SET PC.IdInvalidationMotive = @InvalidationMotiveId
+					, PC.InvalidationDate = @ActualDate
+				FROM dbo.PhysicalCard PC
+				WHERE PC.Code = @CodeTF
+			END
 			-- Suspecious movement insertion
-			INSERT INTO dbo.SuspiciousMovement (
-				IdMasterAccount,
-				IdPhysicalCard,
-				[Date],
-				Amount,
-				[Description],
-				[Reference]
-			)
-			SELECT
-				@MasterAccountId,
-				@IdPhysicalCard,
-				@DateMovement,
-				@Amount,
-				@DescriptionMovement,
-				@Reference
-			WHERE dbo.FNIsExpired(@ExpirationYear, @ExpirationMonth, @ActualDate) = 1;
+
+			IF EXISTS(SELECT 1 FROM dbo.PhysicalCard PC
+				WHERE PC.Code = @CodeTF
+				AND PC.IdInvalidationMotive != NULL)
+				BEGIN
+				INSERT INTO dbo.SuspiciousMovement (
+					IdMasterAccount,
+					IdPhysicalCard,
+					[Date],
+					Amount,
+					[Description],
+					[Reference]
+				)
+				VALUES(
+					@MasterAccountId,
+					@IdPhysicalCard,
+					@DateMovement,
+					@Amount,
+					@DescriptionMovement,
+					@Reference
+					)
+				END;
 			--Movements insertion
 			INSERT INTO dbo.Movement(
 				IdMasterAccount
@@ -803,8 +895,9 @@ BEGIN
 				, @Reference
 				, @NewBalance
 			)
-
+			
 			--INSERT interest movements
+			/*
 			INSERT INTO dbo.CurrentInterestMovement(
 				IdMasterAccount
 				, IdCurrentMovementType
@@ -816,9 +909,10 @@ BEGIN
 				@MasterAccountId
 				, @CurrentMovementTypeId
 				, @ActualDate
-				, @AccruedDebitPenaultyInterest
-				, @RateInterestCurrent
+				, @AmountDebitInterestCurrent
+				, @BalanceInterestCurrent
 			WHERE @MovementName = @CURRENT_INTEREST_BALANCE
+
 
 			INSERT INTO dbo.InterestMoratorMovement(
 				IdMasterAccount
@@ -829,20 +923,20 @@ BEGIN
 			)
 			SELECT
 				@MasterAccountId
-				, @CurrentMovementTypeId
+				, @PenaultyMovementTypeId
 				, @ActualDate
 				, @AccruedDebitPenaultyInterest
-				, @RateInterestMorator
+				, @BalanceInterestPenaulty
 			WHERE @MovementName = @PENAULTY_INTEREST_BALANCE
-
+			*/
 			-- UPDATE PROCESS
-
+			
 			SET @Balance = dbo.FNCalculateNewBalance(@Amount, @Action, @Balance)
 
 			UPDATE dbo.MasterAccount 
 			SET Balance = @Balance
-				, AccruedCurrentInterest = AccruedCurrentInterest + @RateInterestCurrent
-				, AccruedPenaultyInterest = AccruedPenaultyInterest + @RateInterestMorator
+				, AccruedCurrentInterest = AccruedCurrentInterest + @BalanceInterestCurrent
+				, AccruedPenaultyInterest = AccruedPenaultyInterest + @BalanceInterestPenaulty
 			WHERE IdCreditCardAccount = @MasterAccountId
 
 			UPDATE dbo.Movement
@@ -901,9 +995,11 @@ BEGIN
 
 		--Counter
 		SET @ActualIndex = @ActualIndex + 1
+		
 	END
-
 	--End Movement insertion
 	--Counter Main While
-	SET @ActualRecord = @ActualRecord + 1;
+	END
+	SET @ActualDate = DATEADD(DAY, 1, @ActualDate)
+	SET NOCOUNT OFF
 END
