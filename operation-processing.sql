@@ -96,6 +96,7 @@ DECLARE
 	, @DateMovement DATE
 	, @Amount MONEY
 	, @Reference VARCHAR(16)
+	, @NewTFCode VARCHAR(16)
 	, @NewBalance MONEY = 0
 	, @Action VARCHAR(16)
 	, @DescriptionMovement VARCHAR(32)
@@ -121,6 +122,14 @@ DECLARE
 	, @CurrentMovementTypeId INT
 	, @PenaultyMovementTypeId INT
 
+	--CONSTANTS
+	, @ACTION_SUM VARCHAR(8) = 'Suma'
+	, @ACTION_SUB VARCHAR(8) = 'Resta'
+
+	, @CURRENT_INTEREST_BALANCE VARCHAR(32) = 'Intereses Corrientes sobre Saldo'
+	, @PENAULTY_INTEREST_BALANCE VARCHAR(32) = 'Intereses Moratorios Pago no Realizado'
+
+
 DECLARE @InputMovement TABLE(
 	Sec INT IDENTITY(1,1)
 	, [MovementName] VARCHAR(32)
@@ -129,6 +138,7 @@ DECLARE @InputMovement TABLE(
 	, Amount MONEY
 	, [DescriptionMovement] VARCHAR(32)
 	, [Reference] VARCHAR(16)
+	, [NewTFCode] VARCHAR(16)
 );
 
 -- AccountState update variables
@@ -516,6 +526,7 @@ BEGIN
 		, Amount
 		, [DescriptionMovement]
 		, [Reference]
+		, [NewTFCode]
 	)
 	SELECT
 		M.Item.value('@Nombre', 'VARCHAR(32)')
@@ -524,6 +535,7 @@ BEGIN
 		, M.Item.value('@Monto', 'MONEY')
 		, M.Item.value('@Descripcion', 'NVARCHAR(32)')
 		, M.Item.value('@Referencia', 'NVARCHAR(16)')
+		, M.Item.value('@NuevaTF', 'NVARCHAR(16)')
 	FROM @xmlData.nodes(
 		'(root/fechaOperacion[@Fecha=sql:variable("@ActualDate")]/Movimiento/Movimiento)'
 	)
@@ -565,6 +577,7 @@ BEGIN
 			, @Amount = IMO.Amount
 			, @DescriptionMovement = IMO.DescriptionMovement
 			, @Reference = IMO.Reference
+			, @NewTFCode = IMO.NewTFCode
 		FROM @InputMovement IMO
 		WHERE IMO.Sec = @ActualIndex
 
@@ -593,11 +606,8 @@ BEGIN
 			)
 		)
 		
-		--Get movement type
-		SELECT @IdMovementType = MT.Id
-		FROM dbo.MovementType MT
-		WHERE MT.[Name] = @MovementName
-		
+		--Get movement type hay una funcion
+		SET @IdMovementType = dbo.FNGetMovementTypeId(@MovementName)
 
 		--Get account state id and min due date
 		SELECT TOP 1 @IdAccountState = AST.Id
@@ -624,11 +634,11 @@ BEGIN
 		--Get Interest movement type;;;;duda con el @action
 		SELECT @CurrentMovementTypeId = CIMT.Id
 		FROM dbo.CurrentInterestMovementType CIMT
-		WHERE CIMT.Accion = @Action
+		WHERE CIMT.Accion = @ACTION_SUM
 
 		SELECT @PenaultyMovementTypeId = PMT.Id
 		FROM dbo.CurrentInterestMovementType PMT
-		WHERE PMT.Accion = @Action
+		WHERE PMT.Accion = @ACTION_SUB
 
 		-- Preprocess updates
 		IF @MovementName = 'Compra'
@@ -751,134 +761,156 @@ BEGIN
 			SET @TotalDebits = @TotalDebits +
 							@AccruedDebitPenaultyInterest
 		END
+		BEGIN TRY
+		BEGIN TRANSACTION TProcessMovements
+			-- Suspecious movement insertion
+			IF dbo.FNIsExpired(@ExpirationYear, @ExpirationMonth, @ActualDate) = 1
+			BEGIN
+				INSERT INTO dbo.SuspiciousMovement(
+					IdMasterAccount
+					, IdPhysicalCard
+					, [Date]
+					, Amount
+					, [Description]
+					, [Reference]
+				)
+				VALUES(
+					@MasterAccountId
+					, @IdPhysicalCard
+					, @DateMovement
+					, @Amount
+					, @DescriptionMovement
+					, @Reference
+				)
+			END
+			ELSE
+			BEGIN
+			--Movements insertion
+				INSERT INTO dbo.Movement(
+					IdMasterAccount
+					, IdMovementType
+					, IdAccountState
+					, IdPhysicalCard
+					, [Date]
+					, Amount
+					, [Description]
+					, [Reference]
+					, NewBalance
+				)
+				VALUES(
+					@MasterAccountId
+					, @IdMovementType
+					, @IdAccountState
+					, @IdPhysicalCard
+					, @DateMovement
+					, @Amount
+					, @DescriptionMovement
+					, @Reference
+					, @NewBalance
+				)
+			END
 
-		-- BEGIN TRANSACTION
-		-- Suspecious movement insertion
-		IF dbo.FNIsExpired(@ExpirationYear, @ExpirationMonth, @ActualDate) = 1
-		BEGIN
-			INSERT INTO dbo.SuspiciousMovement(
+
+			--INSERT interest movements
+			IF @MovementName = @CURRENT_INTEREST_BALANCE
+			BEGIN
+			INSERT INTO dbo.CurrentInterestMovement(
 				IdMasterAccount
-				, IdPhysicalCard
+				, IdCurrentMovementType
 				, [Date]
 				, Amount
-				, [Description]
-				, [Reference]
+				, NewCurrentAccruedInterest
 			)
 			VALUES(
 				@MasterAccountId
-				, @IdPhysicalCard
-				, @DateMovement
-				, @Amount
-				, @DescriptionMovement
-				, @Reference
+				, @CurrentMovementTypeId
+				, @ActualDate
+				, @AccruedDebitPenaultyInterest
+				, @RateInterestCurrent
 			)
-		END
-		ELSE
-		BEGIN
-		--Movements insertion
-			INSERT INTO dbo.Movement(
+			END
+			IF @MovementName = @PENAULTY_INTEREST_BALANCE
+			BEGIN
+			INSERT INTO dbo.InterestMoratorMovement(
 				IdMasterAccount
-				, IdMovementType
-				, IdAccountState
-				, IdPhysicalCard
+				, IdInterestMoratorMovementType
 				, [Date]
 				, Amount
-				, [Description]
-				, [Reference]
-				, NewBalance
+				, NewAccruedInterestMorator
 			)
 			VALUES(
 				@MasterAccountId
-				, @IdMovementType
-				, @IdAccountState
-				, @IdPhysicalCard
-				, @DateMovement
-				, @Amount
-				, @DescriptionMovement
-				, @Reference
-				, @NewBalance
+				, @CurrentMovementTypeId
+				, @ActualDate
+				, @AccruedDebitPenaultyInterest
+				, @RateInterestMorator
 			)
-		END
-		--INSERT interest movements
-		IF @MovementName = "Intereses Corrientes sobre Saldo"
+			END
+
+			-- UPDATE PROCESS
+
+			SET @Balance = dbo.FNCalculateNewBalance(@Amount, @Action, @Balance)
+
+			UPDATE dbo.MasterAccount 
+			SET Balance = @Balance
+				, AccruedCurrentInterest = AccruedCurrentInterest + @RateInterestCurrent
+				, AccruedPenaultyInterest = AccruedPenaultyInterest + @RateInterestMorator
+			WHERE IdCreditCardAccount = @MasterAccountId
+
+			UPDATE dbo.Movement
+			SET NewBalance = @Balance
+			WHERE IdMasterAccount = @MasterAccountId
+
+			-- Always execute
+			UPDATE dbo.AccountState
+			SET  TotalPurchases = TotalPurchases + @TotalPurchases 
+				, QPurchases = QPurchases + @QPurchases 
+				, TotalDebits = TotalDebits + @TotalDebits
+				, QDebits = QDebits + @QDebits
+				, QBrandOperations = QBrandOperations + @QBrandOperations
+				, TotalWithdrawals = TotalWithdrawals + @TotalWithdrawals
+				, QWithdrawals = QWithdrawals + @QWithdrawals
+				, QATMOperations = QATMOperations + @QATMOperations
+				, CurrentBalance = CurrentBalance + @CurrentBalance
+				, TotalPaymentsDuringMonth = TotalPaymentsDuringMonth + @TotalPaymentsDuringMonth
+				, TotalPaymentsBeforeDueDate = TotalPaymentsBeforeDueDate + @TotalPaymentsBeforeDueDate
+				, QPaymentsDuringMonth = QPaymentsDuringMonth + @QPaymentsDuringMonth
+				, TotalCredits = TotalCredits + @TotalCredits
+				, QCredits = QCredits + @QCredits
+			WHERE Id = @IdAccountState
+
+			--UPDATE SubAccount State
+			UPDATE dbo.SubAccountState
+			SET TotalPurchases = TotalPurchases + @TotalPurchases
+				, QPurchases = QPurchases + @QPurchases
+				, TotalDebits = TotalDebits + @TotalDebits
+				, QBrandOperations = QBrandOperations + @QBrandOperations
+				, TotalWithdrawals = TotalWithdrawals + @TotalWithdrawals
+				, QWithdrawals = QWithdrawals + @QWithdrawals
+				, QATMOperations = QATMOperations + @QATMOperations
+			WHERE Id = @IdSubAccountState
+			AND @IsMaster = 0
+			
+			--COMMIT
+			COMMIT TRANSACTION TProcessMovements
+		END TRY
+		BEGIN CATCH
+		IF @@TRANCOUNT > 0
 		BEGIN
-		INSERT INTO dbo.CurrentInterestMovement(
-			IdMasterAccount
-			, IdCurrentMovementType
-			, [Date]
-			, Amount
-			, NewCurrentAccruedInterest
-		)
-		VALUES(
-			@MasterAccountId
-			, @CurrentMovementTypeId
-			, @ActualDate
-			, @AccruedDebitPenaultyInterest
-			, @RateInterestCurrent
-		)
-		END
-		IF @MovementName = "Intereses Moratorios Pago no Realizado"
-		BEGIN
-		INSERT INTO dbo.InterestMoratorMovement(
-			IdMasterAccount
-			, IdInterestMoratorMovementType
-			, [Date]
-			, Amount
-			, NewAccruedInterestMorator
-		)
-		VALUES(
-			@MasterAccountId
-			, @CurrentMovementTypeId
-			, @ActualDate
-			, @AccruedDebitPenaultyInterest
-			, @RateInterestMorator
-		)
-		END
+			ROLLBACK;
+		END;
+		INSERT INTO dbo.DBErrors	VALUES (
+				SUSER_SNAME(),
+				ERROR_NUMBER(),
+				ERROR_STATE(),
+				ERROR_SEVERITY(),
+				ERROR_LINE(),
+				ERROR_PROCEDURE(),
+				ERROR_MESSAGE(),
+				GETDATE()
+			);
+		END CATCH
 
-		-- UPDATE PROCESS
-
-		SET @Balance = dbo.FNCalculateNewBalance(@Amount, @Action, @Balance)
-
-		UPDATE dbo.MasterAccount 
-		SET Balance = @Balance
-			, AccruedCurrentInterest = AccruedCurrentInterest + @RateInterestCurrent
-			, AccruedPenaultyInterest = AccruedPenaultyInterest + @RateInterestMorator
-		WHERE IdCreditCardAccount = @MasterAccountId
-
-		UPDATE dbo.Movement
-		SET NewBalance = @Balance
-		WHERE IdMasterAccount = @MasterAccountId
-
-		-- Always execute
-		UPDATE dbo.AccountState
-		SET  TotalPurchases = TotalPurchases + @TotalPurchases 
-			, QPurchases = QPurchases + @QPurchases 
-			, TotalDebits = TotalDebits + @TotalDebits
-			, QDebits = QDebits + @QDebits
-			, QBrandOperations = QBrandOperations + @QBrandOperations
-			, TotalWithdrawals = TotalWithdrawals + @TotalWithdrawals
-			, QWithdrawals = QWithdrawals + @QWithdrawals
-			, QATMOperations = QATMOperations + @QATMOperations
-			, CurrentBalance = CurrentBalance + @CurrentBalance
-			, TotalPaymentsDuringMonth = TotalPaymentsDuringMonth + @TotalPaymentsDuringMonth
-			, TotalPaymentsBeforeDueDate = TotalPaymentsBeforeDueDate + @TotalPaymentsBeforeDueDate
-			, QPaymentsDuringMonth = QPaymentsDuringMonth + @QPaymentsDuringMonth
-			, TotalCredits = TotalCredits + @TotalCredits
-			, QCredits = QCredits + @QCredits
-		WHERE Id = @IdAccountState
-
-		--UPDATE SubAccount State
-		UPDATE dbo.SubAccountState
-		SET TotalPurchases = TotalPurchases + @TotalPurchases
-			, QPurchases = QPurchases + @QPurchases
-			, TotalDebits = TotalDebits + @TotalDebits
-			, QBrandOperations = QBrandOperations + @QBrandOperations
-			, TotalWithdrawals = TotalWithdrawals + @TotalWithdrawals
-			, QWithdrawals = QWithdrawals + @QWithdrawals
-			, QATMOperations = QATMOperations + @QATMOperations
-		WHERE Id = @IdSubAccountState
-		AND @IsMaster = 0
-		
 		--Counter
 		SET @ActualIndex = @ActualIndex + 1
 	END
