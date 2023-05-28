@@ -41,8 +41,7 @@ DECLARE
 	, @IdCreditCardAccount INT
 	, @IdCardHolder INT
 	, @IdAccountType INT
-	, @AccruedCurrentInterest MONEY = 0
-	, @AccruedPenaultyInterest MONEY = 0
+	, @IdAccountState INT
 
 Declare @InputMasterAccount TABLE(
 	Sec INT IDENTITY(1,1)
@@ -90,6 +89,84 @@ DECLARE @InputPhysicalCard TABLE (
 	, CVV INT
 )
 
+
+-- Movements insertion 
+DECLARE 
+	@MovementName VARCHAR(64)
+	, @CodeTF VARCHAR(16)
+	, @DateMovement DATE
+	, @Amount MONEY
+	, @Reference VARCHAR(16)
+	--New TF
+	, @NewTFCode VARCHAR(16)
+	, @NewYear INT
+	, @NewMonth INT
+	, @NewCVV INT
+	, @MonetaryAmountPC MONEY
+	, @InvalidationMotiveId INT
+
+	, @NewBalance MONEY = 0
+	, @Action VARCHAR(16)
+	, @DescriptionMovement VARCHAR(32)
+	, @IdMasterAccount INT
+	, @IdMovementType INT
+	, @IdPhysicalCard INT
+	, @IdSubAccountState INT
+	--Variable for Updates
+	, @CurrentBalance MONEY
+	, @QPaymentsDuringMonth INT
+	, @MinPaymentDueDate DATE
+	, @PreviousMinPayment MONEY
+	, @AccountTypeId INT
+
+	--CONSTANTS
+	, @ACTION_SUM VARCHAR(8) = 'Suma'
+	, @ACTION_SUB VARCHAR(8) = 'Resta'
+
+	, @CURRENT_INTEREST_BALANCE VARCHAR(32) = 'Intereses Corrientes sobre Saldo'
+	, @PENAULTY_INTEREST_BALANCE VARCHAR(32) = 'Intereses Moratorios Pago no Realizado'
+
+	, @RENEWAL_FEE_CTM_RULE VARCHAR(32) = 'Cargo renovacion de TF de CTM'
+	, @RENEWAL_FEE_CTA_RULE VARCHAR(32) = 'Cargo renovacion de TF de CTA'
+	, @REPLACEMENT_FEE_CTM_RULE VARCHAR(32) = 'Reposicion de tarjeta de CTM'
+	, @REPLACEMENT_FEE_CTA_RULE VARCHAR(32) = 'Reposicion de tarjeta de CTA'
+
+	, @MOVEMENT_TYPE_RECOVERY_LOST VARCHAR(32) = 'Recuperacion por Perdida'
+	, @MOVEMENT_TYPE_RECOVERY_THEFT VARCHAR(32) = 'Recuperacion por Robo'
+	, @MOVEMENT_TYPE_RENEWAL_TF VARCHAR(32) = 'Renovacion de TF'
+
+	, @Q_DAYS_TO_PAYMENT_RULE VARCHAR(64) = 'Cantidad de dias para pago saldo de contado'
+
+	, @RATE_INTEREST_CURRENT VARCHAR(32) = 'Tasa de interes corriente'
+	, @RATE_INTEREST_MORATOR VARCHAR(16) = 'intereses moratorios'
+
+DECLARE @InputMovement TABLE(
+	Sec INT IDENTITY(1,1)
+	, [MovementName] VARCHAR(64)
+	, CodeTF VARCHAR(16)
+	, DateMovement DATE
+	, Amount MONEY
+	, [DescriptionMovement] VARCHAR(32)
+	, [Reference] VARCHAR(16)
+	, [NewTFCode] VARCHAR(16)
+);
+
+-- AccountState update variables
+	DECLARE
+		 @QATMOperations INT = 0
+		, @QBrandOperations INT = 0
+		, @TotalPaymentsBeforeDueDate MONEY = 0
+		, @TotalPaymentsDuringMonth MONEY = 0
+		, @QPaymentsDurginMonth INT = 0
+		, @TotalPurchases MONEY = 0
+		, @QPurchases INT = 0
+		, @TotalWithdrawals MONEY = 0
+		, @QWithdrawals INT = 0
+		, @TotalCredits MONEY = 0
+		, @QCredits INT = 0
+		, @TotalDebits MONEY = 0
+		, @QDebits INT = 0
+
 -- Expired physical card processing
 DECLARE
 	 @ExpiredPhysicalCardId INT
@@ -104,6 +181,7 @@ DECLARE @ExpiredPhysicalCard TABLE (
 	, Id INT
 	, IdCreditCardAccount INT
 )
+
 
 -- Temp table to load operation tables from xml
 DECLARE @Dates TABLE (
@@ -121,6 +199,23 @@ DECLARE @InputCardHolder TABLE (
 		, [Password] VARCHAR(16)
 )
 ;
+
+
+--Interest variables
+DECLARE @RateInterestCurrent FLOAT 
+	, @RateInterestMorator FLOAT 
+	, @AmountDebitInterestCurrent MONEY = 0
+	, @BalanceInterestCurrent MONEY = 0
+	--Moratorium
+	, @AccruedDebitPenaultyInterest MONEY
+	, @AmountPaymentMinimumPenaulty MONEY
+	, @BalanceInterestPenaulty MONEY = 0
+	--Variables to insert into interest tables
+	, @CurrentMovementTypeId INT
+	, @PenaultyMovementTypeId INT
+
+-- Temp table Current interest
+
 
 -- Loading xml into @xmlData variable
 SET @xmlData = (
@@ -146,10 +241,29 @@ SELECT
 	, @LastDate = MAX(D.OperationDate)
 FROM @Dates D
 
+
+
+WHILE (@ActualDate <= @LastDate)
+BEGIN
+	SET NOCOUNT ON;
+
+	IF	EXISTS (
+		SELECT 1
+		FROM @Dates D
+		WHERE D.OperationDate = @ActualDate)
+	BEGIN
+		SELECT 1;
+	END --End for only operation dates
+	
+	--Counter Main While
+	SET @ActualDate = DATEADD(DAY, 1, @ActualDate)
+	
+=======
 WHILE (@ActualDate <= @LastDate)
 BEGIN
 
 
 
 	SELECT @ActualDate = DATEADD(DAY, 1, @ActualDate)
+
 END
