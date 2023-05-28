@@ -254,16 +254,8 @@ BEGIN
 	BEGIN
 		SELECT 1;
 	END --End for only operation dates
-	
+
 	--Counter Main While
 	SET @ActualDate = DATEADD(DAY, 1, @ActualDate)
-	
-=======
-WHILE (@ActualDate <= @LastDate)
-BEGIN
-
-
-
-	SELECT @ActualDate = DATEADD(DAY, 1, @ActualDate)
 
 END
