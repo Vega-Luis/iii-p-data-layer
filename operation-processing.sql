@@ -59,6 +59,7 @@ DECLARE
 	, @ActualAccountId INT
 	, @MasterAccountId INT
 	, @CardHolderId INT
+	, @AccountStateId INT
 	;
 
 DECLARE @InputAdditionalAccount TABLE (
@@ -87,6 +88,7 @@ DECLARE @InputPhysicalCard TABLE (
 	, ExpirationDateString VARCHAR(8)
 	, CVV INT
 )
+
 
 -- Movements insertion 
 DECLARE 
@@ -164,6 +166,23 @@ DECLARE @InputMovement TABLE(
 		, @QCredits INT = 0
 		, @TotalDebits MONEY = 0
 		, @QDebits INT = 0
+
+-- Expired physical card processing
+DECLARE
+	 @ExpiredPhysicalCardId INT
+	 , @RenewalFee MONEY
+	 , @IdBusinessRuleXAccountType INT
+	 , @IdBusinessRule INT
+	 ;
+
+-- Hold expired cards
+DECLARE @ExpiredPhysicalCard TABLE (
+	Sec INT IDENTITY(1,1)
+	, Id INT
+	, IdCreditCardAccount INT
+)
+
+
 -- Temp table to load operation tables from xml
 DECLARE @Dates TABLE (
 	Sec INT IDENTITY(1,1)
@@ -223,6 +242,7 @@ SELECT
 FROM @Dates D
 
 
+
 WHILE (@ActualDate <= @LastDate)
 BEGIN
 	SET NOCOUNT ON;
@@ -238,4 +258,12 @@ BEGIN
 	--Counter Main While
 	SET @ActualDate = DATEADD(DAY, 1, @ActualDate)
 	
+=======
+WHILE (@ActualDate <= @LastDate)
+BEGIN
+
+
+
+	SELECT @ActualDate = DATEADD(DAY, 1, @ActualDate)
+
 END
