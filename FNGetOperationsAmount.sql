@@ -21,9 +21,9 @@ BEGIN
 	WHERE BR.[Name] = @inBusinessRuleName
 	AND T.Id = @inAccountTypeId
 
-	SELECT @outAmount = R.Amount 
-	FROM dbo.AccountTypeXBusinessRuleMonetaryAmount R
-	WHERE R.IdAccountTypeXBusinessRule = @AccountTypeXBusinessRuleId
+	SELECT @outAmount = O.QOperations
+	FROM dbo.AccountTypeXBusinessRuleOperation O
+	WHERE O.IdAccountTypeXBusinessRule = @AccountTypeXBusinessRuleId
 
 	RETURN @outAmount
 END

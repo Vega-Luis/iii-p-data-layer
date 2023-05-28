@@ -200,7 +200,7 @@
 			IF @StatementBalance <= @TotalPaymentsBeforeDueDate
 			BEGIN
 				-- Current Interest Movement
-				SET @IdMovementType = dbo.FNGetMovementTypeId(@MOVEMENT_TYPE_ACCRUED_INTEREST)
+				SET @IdMovementType = dbo.FNGetMovementypeId(@MOVEMENT_TYPE_ACCRUED_INTEREST)
 				SET @CurrentBalance = @CurrentBalance + @AccruedCurrentInterest
 				INSERT INTO dbo.Movement (
 					IdMasterAccount
