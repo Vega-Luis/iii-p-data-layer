@@ -1,5 +1,14 @@
 DECLARE @xmlData XML
 
+-- Admin user type
+DECLARE @ADMIN_USER_TYPE VARCHAR(16) = 'Administrador';
+DECLARE @IdUserType INT;
+
+-- Getting user type Id
+SELECT @IdUserType = UT.Id
+FROM dbo.UserType UT
+WHERE UT.[Name] = @ADMIN_USER_TYPE
+
 SET @xmlData = (
 	SELECT *
 	FROM OPENROWSET (
@@ -37,11 +46,13 @@ FROM @xmlData.nodes('root/MIT/MIT') AS T(Item)
 
 -- Insert users from loaded xml data
 INSERT INTO dbo.[User] (
-	[Name]
+	IdUserType
+	, [Username]
 	, [Password]
 )
 SELECT
-	T.Item.value('@Nombre', 'VARCHAR(32)')
+	@IdUserType
+	, T.Item.value('@Nombre', 'VARCHAR(32)')
 	, T.Item.value('@Password', 'VARCHAR(32)')
 FROM @xmlData.nodes('root/UA/Usuario') AS T(Item)
 
