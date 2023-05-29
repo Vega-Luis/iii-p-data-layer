@@ -9,11 +9,11 @@ BEGIN
     DECLARE @outResultBalance MONEY
     IF(@inAction = 'Credito')
     BEGIN
-        SET @outResultBalance = @inBalance + @inAmount
+        SET @outResultBalance = @inBalance - @inAmount
     END
     ELSE
     BEGIN
-        SET @outResultBalance = @inBalance - @inAmount
+        SET @outResultBalance = @inBalance + @inAmount
     END
     RETURN @outResultBalance
 END;
