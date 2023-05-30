@@ -1,8 +1,8 @@
 -- SP
 -- Gets the Master account Movements from a selected account state card
-CREATE PROCEDURE dbo.GetMasterAccountMovements
+CREATE OR ALTER PROCEDURE dbo.GetMasterAccountMovements
 	@inIdAccountState INT
-	, @inPostUser VARCHAR(64)
+	, @inPostIdUser INT
 	, @inPostIp VARCHAR(64)
 	, @outResultCode INT OUTPUT
 AS
@@ -10,9 +10,9 @@ BEGIN
 	SET NOCOUNT ON;
 	BEGIN TRY
 		DECLARE @LogDescription VARCHAR(256) = 
-                        '{Action Type = Get Master Account Movements'
+                        '{Action Type = Get Master Account Movements '
 						+ 'Description = ' 
-						+ @inIdAccountState + '}'
+						+ CAST(@inIdAccountState AS VARCHAR(16)) + '}'
 
 		DECLARE @postIdUser INT;
         SET @outResultCode = 0;                     -- No error code
@@ -21,14 +21,14 @@ BEGIN
             M.Id
             , M.[Date]
             , MT.[Name]
-            , M.Description
+            , M.[Description]
             , M.[Reference]
             , M.Amount
             , M.NewBalance
         FROM dbo.Movement M
         INNER JOIN dbo.MovementType MT
             ON M.IdMovementType = MT.Id
-        AND MT.IdAccountState = @inIdAccountState
+        AND M.IdAccountState = @inIdAccountState
 			
 		--Insert in EventLog table
 		INSERT dbo.EventLog(
@@ -38,7 +38,7 @@ BEGIN
 			, [PostTime])
 		VALUES (
 			@LogDescription
-			, @postIdUser
+			, @inPostIdUser
 			, @inPostIp
 			, GETDATE()
 			);
