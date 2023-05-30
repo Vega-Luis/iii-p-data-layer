@@ -4,10 +4,6 @@
 CREATE PROCEDURE dbo.ShowPhysicalCard
 	@inUserName VARCHAR(16)
     , @inPostIp VARCHAR(16)
-	, @outCodeTF VARCHAR(16) OUTPUT
-    , @outCardStatus VARCHAR(8) OUTPUT
-    , @outAccountType VARCHAR(8) OUTPUT
-    , @outExpirationDate DATE OUTPUT
 	, @outResultCode INT OUTPUT
 AS
 BEGIN
@@ -25,6 +21,10 @@ BEGIN
         DECLARE @ExpirationYear INT
         DECLARE @ExpirationMonth INT
 		DECLARE @PostIdUser INT
+		DECLARE @CodeTF VARCHAR(16)
+		DECLARE @CardStatus VARCHAR(16)
+		DECLARE @AccountType VARCHAR(8)
+		DECLARE @ExpirationDate DATE
 
         DECLARE @VALID_CARD VARCHAR(8) = 'Activa'
         DECLARE @INVALID_CARD VARCHAR(8) = 'Vencida'
@@ -35,7 +35,7 @@ BEGIN
 		SET @outResultCode = 0;
 
         SELECT @IdPhysicalCard = PC.Id
-                , @outCodeTF = PC.Code
+                , @CodeTF = PC.Code
                 , @IdInvalidationMotive = PC.IdInvalidationMotive
                 , @IsMaster = CCA.IsMaster
                 , @ExpirationYear = PC.ExpirationYear
@@ -55,31 +55,30 @@ BEGIN
 
         IF @IdInvalidationMotive != NULL
             BEGIN
-                SET @outCardStatus = @INVALID_CARD
+                SET @CardStatus = @INVALID_CARD
             END
         ELSE
             BEGIN
-                SET @outCardStatus = @VALID_CARD
+                SET @CardStatus = @VALID_CARD
             END
 
         IF @IsMaster = 1
             BEGIN 
-                SET @outAccountType = @MASTER
+                SET @AccountType = @MASTER
             END
         ELSE
             BEGIN
-                SET @outAccountType = @ADITIONAL
+                SET @AccountType = @ADITIONAL
             END
 
-        SET @outExpirationDate = DATEFROMPARTS(@ExpirationYear, @ExpirationMonth, 30)
+        SET @ExpirationDate = DATEFROMPARTS(@ExpirationYear, @ExpirationMonth, 30)
 
         SELECT 
-			@IdPhysicalCard
-			, @outCodeTF 
-			, @outCardStatus 
-			, @outAccountType 
-			, @outExpirationDate 
-			, @outResultCode
+			@IdPhysicalCard AS 'Id'
+			, @CodeTF AS 'CardCode'
+			, @CardStatus AS 'AccountStatus'
+			, @AccountType AS 'AccountType'
+			, @ExpirationDate AS 'ExpirationDate'
 
         -- Insert into eventLog table
 
