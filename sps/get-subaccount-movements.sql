@@ -1,33 +1,41 @@
+
 -- SP
 -- Gets the Master account Movements from a selected account state card
-CREATE OR ALTER PROCEDURE dbo.GetAdditionalAccountMovement
+CREATE   PROCEDURE [dbo].[GetAdditionalAccountMovement]
     @inIdSubAccountState INT
     , @inPhysicalCardCode VARCHAR(16)
-	, @inPostIdUser VARCHAR(64)
+	, @inUsername VARCHAR(16)
 	, @inPostIp VARCHAR(64)
 	, @outResultCode INT OUTPUT
 AS
 BEGIN
 	SET NOCOUNT ON;
 	BEGIN TRY
-		DECLARE @LogDescription VARCHAR(256) = 
+		DECLARE
+			@PostUserId INT
+			, @LogDescription VARCHAR(256) = 
                         '{Action Type = Get Additional Account Movements '
 						+ 'Description = ' 
 						+ @inPhysicalCardCode+ '}'
 
-		DECLARE @postIdUser INT;
         SET @outResultCode = 0;                     -- No error code
 
         SELECT
-            M.IdSubAccountState
-            , M.BillingPeriod
+            M.Id
+            , CAST(M.BillingPeriod AS VARCHAR(16)) AS BillingPeriod
             , M.MovementTypeName
             , M.Reference
+			, M.[Description]
             , M.Amount
             , M.NewBalance
         FROM dbo.AdditionalAccountMovement M
         WHERE M.PhysicalCardCode = @inPhysicalCardCode
-			
+		ORDER BY M.BillingPeriod DESC
+		
+		
+		SELECT @PostUserId = U.Id
+		FROM dbo.[User] U
+		WHERE U.[Username] = @inUsername;
 		--Insert in EventLog table
 		INSERT dbo.EventLog(
 			[LogDescription]
@@ -36,7 +44,7 @@ BEGIN
 			, [PostTime])
 		VALUES (
 			@LogDescription
-			, @inPostIdUser
+			, @PostUserId
 			, @inPostIp
 			, GETDATE()
 			);

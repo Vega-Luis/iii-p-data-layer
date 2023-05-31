@@ -1,15 +1,17 @@
 -- SP
 -- Gets the subaccountStatements from a selected physical card
-CREATE OR ALTER PROCEDURE dbo.GetSubAccountStatements
+CREATE   PROCEDURE [dbo].[GetSubAccountStatements]
 	@inPhysicalCardCode VARCHAR(16)
-	, @inPostIdUser  INT
+	, @inUsername VARCHAR(16)
 	, @inPostIp VARCHAR(64)
 	, @outResultCode INT OUTPUT
 AS
 BEGIN
 	SET NOCOUNT ON;
 	BEGIN TRY
-		DECLARE @LogDescription VARCHAR(256) = 
+		DECLARE
+			@PostUserId INT
+			, @LogDescription VARCHAR(256) = 
                         '{Action Type = Get subaccount statements '
 						+ 'Description = ' 
 						+ @inPhysicalCardCode + '}'
@@ -19,7 +21,7 @@ BEGIN
 
         SELECT
             SA.Id
-            , S.BillingPeriod
+            , CAST(S.BillingPeriod AS VARCHAR(16)) AS BillingPeriod
             , SA.QATMOperations
             , SA.QBrandOperations
             , SA.QPurchases
@@ -34,6 +36,9 @@ BEGIN
         AND PC.Code = @inPhysicalCardCode
         ORDER BY S.BillingPeriod DESC
 			
+		SELECT @PostUserId = U.Id
+		FROM dbo.[User] U
+		WHERE U.[Username] = @inUsername;
 		--Insert in EventLog table
 		INSERT dbo.EventLog(
 			[LogDescription]
@@ -42,7 +47,7 @@ BEGIN
 			, [PostTime])
 		VALUES (
 			@LogDescription
-			, @inPostIdUser
+			, @PostUserId
 			, @inPostIp
 			, GETDATE()
 			);
