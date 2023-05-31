@@ -760,9 +760,10 @@ BEGIN
 
 			-- If is an Additional account
 			-- get IdSubAccountState
-			SELECT @IdSubAccountState = SAS.Id
+			SELECT TOP(1) @IdSubAccountState = SAS.Id
 			FROM dbo.SubAccountState SAS
-			WHERE SAS.IdAccountState = @IdAccountState
+			WHERE SAS.IdAdditionalAccount = @IdCreditCardAccount
+			ORDER BY SAS.Id DESC
 
 			IF @IsMaster = 0
 			BEGIN
