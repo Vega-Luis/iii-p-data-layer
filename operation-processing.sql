@@ -1,4 +1,4 @@
--- Pricipal variables
+﻿-- Pricipal variables
 DECLARE
 	@xmlData XML
 	, @ActualRecord INT
@@ -214,7 +214,50 @@ DECLARE @RateInterestCurrent FLOAT
 	, @CurrentMovementTypeId INT
 	, @PenaultyMovementTypeId INT
 
--- Temp table Current interest
+DECLARE
+    @MOVEMENT_TYPE_ACCRUED_INTEREST VARCHAR(64) = 'Intereses Corrientes sobre Saldo'
+	, @MOVEMENT_TYPE_PENALTY_INTEREST VARCHAR(64) = 'Intereses Moratorios Pago no Realizado'
+	, @MOVEMENT_TYPE_SERVICES  VARCHAR(64) = 'Cargos por Servicio'
+	, @MOVEMENT_TYPE_OVER_ATM VARCHAR(64) = 'Cargos por Multa Exceso Uso ATM'
+	, @MOVEMENT_TYPE_OVER_BRAND VARCHAR (64) = 'Cargos por Multa Exceso Uso Ventana'
+    , @MOVEMENT_TYPE_INTEREST_REDEMPTION VARCHAR(64) = 'Credito por Redencion'
+	, @MASTER_ACCOUNT_SERVICES_RULE VARCHAR(64) = 'Cargos Servicio Mensual CTM'
+	, @ADDITIONAL_ACCOUNT_SERVICES_RULE VARCHAR(64) = 'Cargos Servicio Mensual CTA'
+	, @FRAUD_INSURANCE_RULE VARCHAR(64) = 'Cargo Seguro Contra Fraudes'
+	, @OVER_ATM_OPERATIONS_RULE VARCHAR(64) = 'Multa exceso de operaciones ATM'
+	, @OVER_BRAND_OPERATIONS_RULE VARCHAR(64) = 'Multa exceso de operaciones Ventanilla'
+	, @ATM_OPERATIONS_LIMIT_RULE VARCHAR(64) = 'Cantidad de opraciones en ATM'
+	, @BRAND_OPERATIONS_LIMIT_RULE VARCHAR(64) = 'Cantidad de operacion en Ventanilla'
+    --, @Q_DAYS_TO_PAYMENT_RULE VARCHAR(64) = 'Cantidad de dias para pago saldo de contado'
+
+	--, @IdAccountState INT
+	--, @IdMasterAccount INT
+	, @CreditCardCreationDate DATE
+	, @StatementBalance MONEY -- Account statement balance
+	--, @PreviousMinPayment MONEY
+	, @BillingPeriod DATE
+	--, @MinPaymentDueDate DATE
+	, @LatePaymentInterest FLOAT
+	--, @QATMOperations INT
+	--, @QBrandOperations INT
+	--, @TotalPaymentsBeforeDueDate MONEY
+	, @MasterAccountFee MONEY
+	, @AdditionalAccountFee MONEY
+	, @FraudInsuranceFee MONEY
+	, @ATMOverOperationsFEE MONEY
+	, @BrandOverOperationsFee MONEY
+	--, @IdMovementType INT
+	, @QAdditionalAccounts INT
+	, @ATMOperationsLimit INT
+	, @BrandOperationsLimit INT
+	--, @IdPhysicalCard INT
+	--, @CurrentBalance MONEY -- Account current balance
+	, @AccruedCurrentInterest MONEY
+	, @AccruedPenaltyInterest MONEY
+    , @QpaymentInstallments INT = 10 -- Remember to change value
+    , @CurrentInterestMovementTypeId INT
+    , @PenaltyInterestMovementTypeId INT
+	;
 
 
 -- Loading xml into @xmlData variable
@@ -516,7 +559,7 @@ BEGIN
 		-- ends additional account insertion
 
 		-- Insertin physical cards *******************************************
-	-- Preprocessing input physical cards
+		-- Preprocessing input physical cards
 		DELETE @InputPhysicalCard
 
 		INSERT INTO @InputPhysicalCard (
@@ -1018,7 +1061,7 @@ BEGIN
 			AND MA.IdCreditCardAccount = @ActualIndex
         
 		BEGIN TRY --TRY
-			BEGIN TRANSACTION TDebitInterest
+			
 			IF @Balance > 0
 			BEGIN
 				SET @RateInterestCurrent = dbo.FNGetRateInterest(@AccountTypeId
@@ -1028,6 +1071,8 @@ BEGIN
 
 				SET @BalanceInterestCurrent = @BalanceInterestCurrent +
 											@AmountDebitInterestCurrent
+
+				BEGIN TRANSACTION TDebitInterest
 				--INSERT
 				INSERT INTO dbo.CurrentInterestMovement(
 				IdMasterAccount
@@ -1056,8 +1101,6 @@ BEGIN
 
 				SET @AccruedDebitPenaultyInterest = @AmountPaymentMinimumPenaulty /
 													@RateInterestMorator /100/30
-
-			
 
 				SET @BalanceInterestPenaulty = @BalanceInterestPenaulty +
 										@AccruedDebitPenaultyInterest
@@ -1107,60 +1150,17 @@ BEGIN
 		SET @ActualIndex = @ActualIndex + 1
 	END
 	
-		-- Procesing account states **************************************************************************************
-		DECLARE
-    	@MOVEMENT_TYPE_ACCRUED_INTEREST VARCHAR(64) = 'Intereses Corrientes sobre Saldo'
-		, @MOVEMENT_TYPE_PENALTY_INTEREST VARCHAR(64) = 'Intereses Moratorios Pago no Realizado'
-		, @MOVEMENT_TYPE_SERVICES  VARCHAR(64) = 'Cargos por Servicio'
-		, @MOVEMENT_TYPE_OVER_ATM VARCHAR(64) = 'Cargos por Multa Exceso Uso ATM'
-		, @MOVEMENT_TYPE_OVER_BRAND VARCHAR (64) = 'Cargos por Multa Exceso Uso Ventana'
-        , @MOVEMENT_TYPE_INTEREST_REDEMPTION VARCHAR(64) = 'Credito por Redencion'
-		, @MASTER_ACCOUNT_SERVICES_RULE VARCHAR(64) = 'Cargos Servicio Mensual CTM'
-		, @ADDITIONAL_ACCOUNT_SERVICES_RULE VARCHAR(64) = 'Cargos Servicio Mensual CTA'
-		, @FRAUD_INSURANCE_RULE VARCHAR(64) = 'Cargo Seguro Contra Fraudes'
-		, @OVER_ATM_OPERATIONS_RULE VARCHAR(64) = 'Multa exceso de operaciones ATM'
-		, @OVER_BRAND_OPERATIONS_RULE VARCHAR(64) = 'Multa exceso de operaciones Ventanilla'
-		, @ATM_OPERATIONS_LIMIT_RULE VARCHAR(64) = 'Cantidad de opraciones en ATM'
-		, @BRAND_OPERATIONS_LIMIT_RULE VARCHAR(64) = 'Cantidad de operacion en Ventanilla'
-        --, @Q_DAYS_TO_PAYMENT_RULE VARCHAR(64) = 'Cantidad de dias para pago saldo de contado'
+	-- Procesing account states **************************************************************************************
 
-		--, @IdAccountState INT
-		--, @IdMasterAccount INT
-		, @CreditCardCreationDate DATE
-		, @StatementBalance MONEY -- Account statement balance
-		--, @PreviousMinPayment MONEY
-		, @BillingPeriod DATE
-		--, @MinPaymentDueDate DATE
-		, @LatePaymentInterest FLOAT
-		--, @QATMOperations INT
-		--, @QBrandOperations INT
-		--, @TotalPaymentsBeforeDueDate MONEY
-		, @MasterAccountFee MONEY
-		, @AdditionalAccountFee MONEY
-		, @FraudInsuranceFee MONEY
-		, @ATMOverOperationsFEE MONEY
-		, @BrandOverOperationsFee MONEY
-		--, @IdMovementType INT
-		, @QAdditionalAccounts INT
-		, @ATMOperationsLimit INT
-		, @BrandOperationsLimit INT
-		--, @IdPhysicalCard INT
-		--, @CurrentBalance MONEY -- Account current balance
-		, @AccruedCurrentInterest MONEY
-		, @AccruedPenaltyInterest MONEY
-        , @QpaymentInstallments INT = 10 -- Remember to change value
-        , @CurrentInterestMovementTypeId INT
-        , @PenaltyInterestMovementTypeId INT
-		;
 
-        -- Obtain interest movememt types id
-        SELECT @CurrentInterestMovementTypeId = MT.Id
-        FROM dbo.CurrentInterestMovementType MT
-        WHERE MT.[Name] = @MOVEMENT_TYPE_INTEREST_REDEMPTION
+    -- Obtain interest movememt types id
+    SELECT @CurrentInterestMovementTypeId = MT.Id
+    FROM dbo.CurrentInterestMovementType MT
+    WHERE MT.[Name] = @MOVEMENT_TYPE_INTEREST_REDEMPTION
 
-        SELECT @PenaltyInterestMovementTypeId = MT.Id
-        FROM dbo.InterestMoratorMovementType MT
-        WHERE MT.[Name] = @MOVEMENT_TYPE_INTEREST_REDEMPTION
+    SELECT @PenaltyInterestMovementTypeId = MT.Id
+    FROM dbo.InterestMoratorMovementType MT
+    WHERE MT.[Name] = @MOVEMENT_TYPE_INTEREST_REDEMPTION
 
 	-- Processing Account staments
 	-- Account Statements that are in closing date
@@ -1207,6 +1207,7 @@ BEGIN
 	WHILE (@ActualIndex <= @LastIndex)
 	BEGIN
 		BEGIN TRY
+
 			-- GET AccountState records on actual index
 			SELECT
 				@IdAccountState = CS.IdAccountState
@@ -1275,7 +1276,7 @@ BEGIN
 			SET @BrandOverOperationsFee = dbo.FNGetMonetaryAmount(@IdAccountType,
 							@OVER_BRAND_OPERATIONS_RULE)
 
-
+			BEGIN TRANSACTION TClosingStatements -- Starts insertions
 			-- Movement redemption
 			INSERT INTO dbo.InterestMoratorMovement(
 				IdMasterAccount
@@ -1399,7 +1400,7 @@ BEGIN
 
 			SET @CurrentBalance = @CurrentBalance + @AdditionalAccountFee
 
-			INSERT INTO dbo.Movement with (rowlock)(
+			INSERT INTO dbo.Movement (
 				IdMasterAccount
 				, IdMovementType
 				, IdAccountState
@@ -1425,7 +1426,7 @@ BEGIN
 			-- Fraud insurance service fee movement
 			SET @CurrentBalance = @CurrentBalance + @FraudInsuranceFee
 
-			INSERT INTO dbo.Movement with (rowlock)(
+			INSERT INTO dbo.Movement (
 				IdMasterAccount
 				, IdMovementType
 				, IdAccountState
@@ -1543,8 +1544,13 @@ BEGIN
 				, MA.AccruedPenaultyInterest = 0
 			FROM dbo.MasterAccount MA
 			WHERE MA.IdCreditCardAccount = @IdMasterAccount
+			COMMIT TRANSACTION TClosingStatements
 		END TRY 
 		BEGIN CATCH
+			IF @@TRANCOUNT > 0
+			BEGIN
+				ROLLBACK;
+			END;
 			INSERT INTO dbo.DBErrors
 				VALUES(
 				SUSER_SNAME()
@@ -1562,5 +1568,4 @@ BEGIN
 	END
 	--Counter Main While
 	SET @ActualDate = DATEADD(DAY, 1, @ActualDate)
-
 END
