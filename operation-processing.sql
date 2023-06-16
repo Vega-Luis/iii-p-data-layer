@@ -260,6 +260,96 @@ DECLARE
 	;
 
 
+-- Temp tables for ACID operations processing
+-- Temp Operation suspicious movement table
+DECLARE @TempSuspiciousMovement TABLE (
+    Sec INT IDENTITY(1,1)
+    , IdMasterAccount INT
+    , IdPhysicalCard INT
+    , [Date] DATE
+    , Amount MONEY
+    , [Description] VARCHAR(64)
+    , [Reference] VARCHAR(8)
+)
+
+-- Temp Operation movement table
+DECLARE @TempMovement TABLE (
+    Sec INT IDENTITY(1,1)
+    , IdMasterAccount INT 
+    , IdMovementType INT
+    , IdAccountStament INT
+    , IdPhysicalCard INT
+    , [Date] DATE
+    , Amount MONEY
+    , [Description] VARCHAR(64)
+    , [Reference] VARCHAR(8)
+    , NewBalance MONEY
+)
+
+-- Temp Master account
+DECLARE @TempMasterAccount TABLE(
+    Sec INT IDENTITY(1,1)
+    , IdCreditCardAccount INT
+    , Balance MONEY
+    , AccruedCurrentInterest MONEY
+    , AccruedPenaultyInterest MONEY
+)
+-- Temp account statement
+DECLARE @TempAccountStatement TABLE(
+    Sec INT IDENTITY(1,1)
+    , IdAccountStament INT
+    , IdMasterAccount INT
+    , TotalPurchases MONEY
+    , QPurchases INT
+    , TotalDebits MONEY
+    , QDebits INT
+    , QBrandOperations INT
+    , TotalWithdrawals MONEY
+    , QWhithdrawals INT
+    , QATMOperations INT
+    , CurrentBalance MONEY
+    , TotalPaymentsDuringMonth MONEY
+    , TotalPaymentsBeforeDueDate MONEY
+    , QPaymentsDuringMonth INT
+    , TotalCredits MONEY
+    , QCredits INT
+)
+
+
+-- Temp subAccountStatements operations table
+DECLARE @TempSubAccountStatement TABLE(
+    Sec INT IDENTITY(1,1)
+    , IdSubAccountStatement INT
+    , IdAccountStatement INT
+    , IdMasterAccount INT
+    , TotalPurchases MONEY
+    , QPurchases INT
+    , TotalDebits MONEY
+    , QBrandOperations INT
+    , TotalWithdrawals MONEY
+    , QWhithdrawals INT
+    , QATMOperations INT
+)
+
+-- Temp Current interest movement operations table
+DECLARE @TempCurrentInterestMovement TABLE (
+    IdMasterAccount INT
+    , IdCurrentMovementType INT
+    , [Date] DATE
+    , Amount MONEY
+    , NewCurrentAccruedInterest MONEY
+)
+
+-- Temp interest morator movement
+DECLARE @TempInterestMoratorMovement TABLE (
+    Sec INT IDENTITY(1,1)
+    , IdMasterAccount INT
+    , IdInterestMoratorMovementType INT
+    , [Date] DATE
+    , Amount MONEY
+    , NewAccruedInterestMorator MONEY
+)
+
 -- Loading xml into @xmlData variable
 SET @xmlData = (
 	SELECT *
@@ -628,7 +718,7 @@ BEGIN
 	
 		-- Movement Insertion **********************************************************************************
 		DELETE @InputMovement
-
+		DELETE @TempMovement
 		-- Preprocces movements from xml data
 		INSERT INTO @InputMovement(
 			[MovementName]
@@ -873,9 +963,8 @@ BEGIN
 																		, @RENEWAL_FEE_CTM_RULE)
 						SET @TotalDebits = @TotalDebits + @MonetaryAmountPC
 			END
-
-			BEGIN TRY
-			BEGIN TRANSACTION TProcessMovements
+			
+			--Insert into temp tables
 				IF @NewTFCode != ''
 				BEGIN
 					INSERT INTO dbo.PhysicalCard(
@@ -908,7 +997,7 @@ BEGIN
 					WHERE PC.Code = @CodeTF
 					AND PC.IdInvalidationMotive != NULL)
 					BEGIN
-					INSERT INTO dbo.SuspiciousMovement (
+					INSERT INTO @TempSuspiciousMovement (
 						IdMasterAccount,
 						IdPhysicalCard,
 						[Date],
@@ -926,10 +1015,10 @@ BEGIN
 						)
 					END;
 				--Movements insertion
-				INSERT INTO dbo.Movement WITH (ROWLOCK)(
+				INSERT INTO @TempMovement(
 					IdMasterAccount
 					, IdMovementType
-					, IdAccountState
+					, IdAccountStatement
 					, IdPhysicalCard
 					, [Date]
 					, Amount
@@ -954,17 +1043,17 @@ BEGIN
 				-- UPDATE PROCESS
 				SET @Balance = dbo.FNCalculateNewBalance(@Amount, @Action, @Balance)
 
-				UPDATE dbo.MasterAccount WITH (ROWLOCK)
+				UPDATE @TempMasterAccount
 				SET Balance = @Balance
 				WHERE IdCreditCardAccount = @MasterAccountId
 
-				UPDATE dbo.Movement WITH (ROWLOCK)
+				UPDATE @Movement
 				SET NewBalance = @Balance
 				WHERE @LastId = Id
 
 
 				-- Always execute
-				UPDATE dbo.AccountState WITH (ROWLOCK)
+				UPDATE @TempAccountState
 				SET  TotalPurchases = TotalPurchases + @TotalPurchases 
 					, QPurchases = QPurchases + @QPurchases 
 					, TotalDebits = TotalDebits + @TotalDebits
@@ -982,7 +1071,7 @@ BEGIN
 				WHERE Id = @IdAccountState
 
 				--UPDATE SubAccount State
-				UPDATE dbo.SubAccountState WITH (ROWLOCK)
+				UPDATE @TempSubAccountState
 				SET TotalPurchases = TotalPurchases + @TotalPurchases
 					, QPurchases = QPurchases + @QPurchases
 					, TotalDebits = TotalDebits + @TotalDebits
@@ -993,26 +1082,6 @@ BEGIN
 				WHERE Id = @IdSubAccountState
 				AND @IsMaster = 0
 			
-				--COMMIT
-				COMMIT TRANSACTION TProcessMovements
-			END TRY
-			BEGIN CATCH
-			IF @@TRANCOUNT > 0
-			BEGIN
-				ROLLBACK;
-			END;
-			INSERT INTO dbo.DBErrors	VALUES (
-					SUSER_SNAME(),
-					ERROR_NUMBER(),
-					ERROR_STATE(),
-					ERROR_SEVERITY(),
-					ERROR_LINE(),
-					ERROR_PROCEDURE(),
-					ERROR_MESSAGE(),
-					GETDATE()
-				);
-			END CATCH
-			SET NOCOUNT OFF
 			--Counter
 			SET @ActualIndex = @ActualIndex + 1
 		END
@@ -1060,7 +1129,6 @@ BEGIN
 			ON T.Id = MA.IdAccountType
 			AND MA.IdCreditCardAccount = @ActualIndex
         
-		BEGIN TRY --TRY
 			
 			IF @Balance > 0
 			BEGIN
@@ -1072,9 +1140,8 @@ BEGIN
 				SET @BalanceInterestCurrent = @BalanceInterestCurrent +
 											@AmountDebitInterestCurrent
 
-				BEGIN TRANSACTION TDebitInterest
-				--INSERT
-				INSERT INTO dbo.CurrentInterestMovement(
+				--INSERT into temp tables
+				INSERT INTO @TempCurrentInterestMovement(
 				IdMasterAccount
 				, IdCurrentMovementType
 				, [Date]
@@ -1106,7 +1173,7 @@ BEGIN
 										@AccruedDebitPenaultyInterest
 
 				--Insert
-				INSERT INTO dbo.InterestMoratorMovement(
+				INSERT INTO @TempInterestMoratorMovement(
 				IdMasterAccount
 				, IdInterestMoratorMovementType
 				, [Date]
@@ -1122,30 +1189,11 @@ BEGIN
 				)
 			END
 			--UPDATE
-			UPDATE dbo.MasterAccount WITH (ROWLOCK)
+			UPDATE @TempMasterAccount
 			SET  AccruedCurrentInterest = AccruedCurrentInterest + @BalanceInterestCurrent
 				, AccruedPenaultyInterest = AccruedPenaultyInterest + @BalanceInterestPenaulty
 			WHERE IdCreditCardAccount = @MasterAccountId
 
-			COMMIT TRANSACTION TDebitInterest
-		END TRY
-		BEGIN CATCH
-			IF @@TRANCOUNT > 0
-			BEGIN
-				ROLLBACK;
-			END;
-		INSERT INTO dbo.DBErrors	VALUES (
-				SUSER_SNAME(),
-				ERROR_NUMBER(),
-				ERROR_STATE(),
-				ERROR_SEVERITY(),
-				ERROR_LINE(),
-				ERROR_PROCEDURE(),
-				ERROR_MESSAGE(),
-				GETDATE()
-			);
-		END CATCH
-		SET NOCOUNT OFF
 		--Counter interest
 		SET @ActualIndex = @ActualIndex + 1
 	END
@@ -1206,8 +1254,6 @@ BEGIN
 	-- Go through every record
 	WHILE (@ActualIndex <= @LastIndex)
 	BEGIN
-		BEGIN TRY
-
 			-- GET AccountState records on actual index
 			SELECT
 				@IdAccountState = CS.IdAccountState
@@ -1276,9 +1322,8 @@ BEGIN
 			SET @BrandOverOperationsFee = dbo.FNGetMonetaryAmount(@IdAccountType,
 							@OVER_BRAND_OPERATIONS_RULE)
 
-			BEGIN TRANSACTION TClosingStatements -- Starts insertions
 			-- Movement redemption
-			INSERT INTO dbo.InterestMoratorMovement(
+			INSERT INTO @TempInterestMoratorMovement(
 				IdMasterAccount
 				, IdInterestMoratorMovementType
 				, [Date]
@@ -1293,7 +1338,7 @@ BEGIN
 				, 0
 			)
 
-			INSERT INTO dbo.CurrentInterestMovement(
+			INSERT INTO @TempCurrentInterestMovement(
 				IdMasterAccount
 				, IdCurrentMovementType
 				, [Date]
@@ -1314,7 +1359,7 @@ BEGIN
 				-- Current Interest Movement
 				SET @IdMovementType = dbo.FNGetMovementTypeId(@MOVEMENT_TYPE_ACCRUED_INTEREST)
 				SET @CurrentBalance = @CurrentBalance + @AccruedCurrentInterest
-				INSERT INTO dbo.Movement (
+				INSERT INTO @TempMovement (
 					IdMasterAccount
 					, IdMovementType
 					, IdAccountState
@@ -1344,7 +1389,7 @@ BEGIN
 			-- Penalty interest Movement
 			SET @IdMovementType = dbo.FNGetMovementTypeId(@MOVEMENT_TYPE_PENALTY_INTEREST)
 			SET @CurrentBalance = @CurrentBalance + @AccruedPenaltyInterest
-				INSERT INTO dbo.Movement (
+				INSERT INTO @TempMovement (
 					IdMasterAccount
 					, IdMovementType
 					, IdAccountState
@@ -1373,7 +1418,7 @@ BEGIN
 			-- Master account service fee movement
 			SET @CurrentBalance = @CurrentBalance + @MasterAccountFee
 
-			INSERT INTO dbo.Movement with (rowlock)(
+			INSERT INTO @TempMovement (
 				IdMasterAccount
 				, IdMovementType
 				, IdAccountState
@@ -1400,7 +1445,7 @@ BEGIN
 
 			SET @CurrentBalance = @CurrentBalance + @AdditionalAccountFee
 
-			INSERT INTO dbo.Movement (
+			INSERT INTO @TempMovement (
 				IdMasterAccount
 				, IdMovementType
 				, IdAccountState
@@ -1426,7 +1471,7 @@ BEGIN
 			-- Fraud insurance service fee movement
 			SET @CurrentBalance = @CurrentBalance + @FraudInsuranceFee
 
-			INSERT INTO dbo.Movement (
+			INSERT INTO @TempMovement (
 				IdMasterAccount
 				, IdMovementType
 				, IdAccountState
@@ -1457,7 +1502,7 @@ BEGIN
 				SET @IdMovementType = dbo.FNGetMovementTypeId(@MOVEMENT_TYPE_OVER_ATM)
 				-- Inserting over atm operations  charge movement
 				SET @CurrentBalance = @CurrentBalance + @ATMOverOperationsFEE
-				INSERT INTO dbo.Movement (
+				INSERT INTO @TempMovement (
 					IdMasterAccount
 					, IdMovementType
 					, IdAccountState
@@ -1489,7 +1534,7 @@ BEGIN
 				SET @IdMovementType = dbo.FNGetMovementTypeId(@MOVEMENT_TYPE_OVER_BRAND)
 				-- Inserting fraud insurance servise fee movement
 				SET @CurrentBalance = @CurrentBalance + @BrandOverOperationsFee
-				INSERT INTO dbo.Movement (
+				INSERT INTO @TempMovement (
 					IdMasterAccount
 					, IdMovementType
 					, IdAccountState
@@ -1518,7 +1563,7 @@ BEGIN
 			SET @PreviousMinPayment = @CurrentBalance / @QpaymentInstallments 
 							
 			-- Inserting new Account State 
-			INSERT INTO dbo.AccountState (
+			INSERT INTO @TempAccountState (
 				IdMasterAccount
 				, CurrentBalance    -- Statement balance
 				, PreviousMinPayment
@@ -1537,35 +1582,172 @@ BEGIN
 				, @AccruedPenaltyInterest
 			)
 
-			UPDATE MA WITH (ROWLOCK)
+			UPDATE MA
 			SET
 				MA.Balance = @CurrentBalance
 				,  MA.AccruedCurrentInterest = 0
 				, MA.AccruedPenaultyInterest = 0
-			FROM dbo.MasterAccount MA
+			FROM @TempMasterAccount MA
 			WHERE MA.IdCreditCardAccount = @IdMasterAccount
-			COMMIT TRANSACTION TClosingStatements
-		END TRY 
+		
+		
+
+		SET @ActualIndex = @ActualIndex + 1
+	END
+
+	
+	SELECT
+		 @ActualIndex = MIN(MA.IdMasterAccount)
+		 , @LastIndex = MAX(MA.IdMasterAccount)
+	FROM @TempMasterAccount
+	WHILE (@ActualIndex <= @LastIndex)
+	BEGIN
+		BEGIN TRY
+			SET NOCOUNT ON;
+
+			SELECT
+					@TotalPurchases = TSS.TotalPurchases
+					, @QPurchases = TSS.QPurchases
+					, @TotalDebits = TSS.TotalDebits 
+					, @QBrandOperations = TSS.QBrandOperations
+					, @TotalWithdrawals = TSS.TotalWithdrawals
+					, @QWithdrawals = TSS.QWithdrawals
+					, @QATMOperations = TSS.QATMOperations
+			FROM @TempSubAccountState TSS
+			WHERE TSS.IdMasterAccount = @ActualIndex
+
+			SELECT
+			 @TotalPurchases  = TS.TotalPurchases
+					, @QPurchases = TS.QPurchases
+					, @TotalDebits = TS.TotalPurchases
+					, @QDebits = TS.QDebits
+					, @QBrandOperations = TS.QBrandOperations
+					, @TotalWithdrawals = TS.TotalWithdrawals
+					, @QWithdrawals = TS.QWithdrawals
+					, @QATMOperations = TS.QATMOperations
+					, @CurrentBalance = TS.CurrentBalance
+					, @TotalPaymentsDuringMonth = TS.TotalPaymentsDuringMonth
+					, @TotalPaymentsBeforeDueDate = TS.TotalPaymentsBeforeDueDate
+					, @QPaymentsDuringMonth = TS.QPaymentsDurginMonth
+					, @TotalCredits = TS.TotalCredits
+					, @QCredits = TS.QCredits
+			FROM @TempAccountState TS
+			WHERE TS.IdMasterAccount = @ActualIndex
+
+			SELECT
+					@Balance = TMA.Balance
+					, @AccruedCurrentInterest = TMA.AccruedCurrentInterest
+					, @AccruedPenaltyInterest = TMA.AccruedPenaltyInterest
+			FROM @TempMasterAccount TMA
+			WHERE TMA.IdMasterAccount = @ActualIndex
+
+			BEGIN TRANSACTION TOperationsXMasterAccount
+			INSERT INTO dbo.SuspiciousMovement
+			SELECT
+				TSM.IdMasterAccount
+				, TSM.IdPhysicalCard
+				, TSM.[Date]
+				, TSM.Amount
+				, TSM.[Description]
+				, TSM.[Reference]
+			FROM @TempSuspiciousMovement TSM
+			WHERE TSM.IdMasterAccount = @ActualIndex
+
+			INSERT INTO dbo.Movement
+			SELECT
+				TM.IdMasterAccount
+				, TM.IdMovementType
+				, TM.IdAccountStatement
+				, TM.IdPhysicalCard
+				, TM.[Date]
+				, TM.Amount
+				, TM.[Description]
+				, TM.[Reference]
+				, TM.NewBalance
+			FROM @TempMovement TM
+			WHERE TM.IdMasterAccount = @ActualIndex
+
+			INSERT INTO dbo.CurrentInterestMovement
+			SELECT
+				TIM.IdMasterAccount
+				, TIM.IdCurrentMovementType
+				, TIM.[Date]
+				, TIM.Amount
+				, TIM.NewCurrentAccruedInterest
+			FROM @TempCurrentInterestMovement TIM
+			WHERE @IdMasterAccount = @ActualIndex
+
+			INSERT INTO dbo.InterestMoratorMovement
+			SELECT
+				TIM.IdMasterAccount
+				, TIM.IdCurrentMovementType
+				, TIM.[Date]
+				, TIM.Amount
+				, TIM.NewCurrentAccruedInterest
+			FROM @TempInterestMoratorMovement TIM
+			WHERE @IdMasterAccount = @ActualIndex
+
+			UPDATE SS
+				SET
+					TotalPurchases = @TotalPurchases
+					, QPurchases = @QPurchases
+					, TotalDebits = @TotalDebits
+					, QBrandOperations = @QBrandOperations
+					, TotalWithdrawals = @TotalWithdrawals
+					, QWithdrawals = @QWithdrawals
+					, QATMOperations = @QATMOperations
+				FROM dbo.SubAccountStatate SS
+				WHERE SS.IdSubAccountState = @IdSubAccountState
+			
+			UPDATE S
+				SET 
+				TotalPurchases = @TotalPurchases 
+					, QPurchases = @QPurchases 
+					, TotalDebits = @TotalDebits
+					, QDebits = @QDebits
+					, QBrandOperations = @QBrandOperations
+					, TotalWithdrawals = @TotalWithdrawals
+					, QWithdrawals = @QWithdrawals
+					, QATMOperations = @QATMOperations
+					, CurrentBalance = @CurrentBalance
+					, TotalPaymentsDuringMonth = @TotalPaymentsDuringMonth
+					, TotalPaymentsBeforeDueDate = @TotalPaymentsBeforeDueDate
+					, QPaymentsDuringMonth = @QPaymentsDuringMonth
+					, TotalCredits = @TotalCredits
+					, QCredits = @QCredits
+			FROM dbo.AccountState S
+			WHERE S.IdAccountState = @IdAccountStament
+
+			UPDATE MA
+				SET
+					Balance = @NewBalance
+					, AccruedCurrentInterest = @AccruedCurrentInterest
+					, AccruedPenaltyInterest = @AccruedPenaltyInterest
+			FROM dbo.MasterAccount MA
+			WHERE MA.IdCreditCardAccount = @ActualIndex
+
+			SET @ActualIndex = @ActualIndex + 1
+			COMMIT TRANSACTION TOperationsXMasterAccount
+		END TRY
 		BEGIN CATCH
 			IF @@TRANCOUNT > 0
 			BEGIN
 				ROLLBACK;
 			END;
-			INSERT INTO dbo.DBErrors
-				VALUES(
-				SUSER_SNAME()
-				, ERROR_NUMBER()
-				, ERROR_STATE()
-				, ERROR_SEVERITY()
-				, ERROR_LINE()
-				, ERROR_PROCEDURE()
-				, ERROR_MESSAGE()
-				, GETDATE()
-				);
+		INSERT INTO dbo.DBErrors	VALUES (
+				SUSER_SNAME(),
+				ERROR_NUMBER(),
+				ERROR_STATE(),
+				ERROR_SEVERITY(),
+				ERROR_LINE(),
+				ERROR_PROCEDURE(),
+				ERROR_MESSAGE(),
+				GETDATE()
+			);
 		END CATCH
-
-		SET @ActualIndex = @ActualIndex + 1
+		SET NOCOUNT OFF;
 	END
+
 	--Counter Main While
 	SET @ActualDate = DATEADD(DAY, 1, @ActualDate)
 END
