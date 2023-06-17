@@ -272,3 +272,12 @@ SELECT
 	IMT.[Name]
 	, IMT.[Action]
 FROM @InputInterestMovementType IMT
+
+
+-- Load new Physical cards for renovation
+INSERT INTO dbo.NewPhysicalCard (
+	Code
+)
+SELECT
+	T.Item.value('Numero', 'VARCHAR(16)')
+FROM @xmlData.nodes('root/NuevasTF/NuevaTF') AS T(Item)

@@ -126,7 +126,7 @@ DECLARE
 	, @CURRENT_INTEREST_BALANCE VARCHAR(32) = 'Intereses Corrientes sobre Saldo'
 	, @PENAULTY_INTEREST_BALANCE VARCHAR(32) = 'Intereses Moratorios Pago no Realizado'
 
-	, @RENEWAL_FEE_CTM_RULE VARCHAR(32) = 'Cargo renovacion de TF de CTM'
+	, @RENEWAL_FEE_RULE VARCHAR(32) = 'Cargo renovacion de TF de CTM'
 	, @RENEWAL_FEE_CTA_RULE VARCHAR(32) = 'Cargo renovacion de TF de CTA'
 	, @REPLACEMENT_FEE_CTM_RULE VARCHAR(32) = 'Reposicion de tarjeta de CTM'
 	, @REPLACEMENT_FEE_CTA_RULE VARCHAR(32) = 'Reposicion de tarjeta de CTA'
@@ -139,6 +139,8 @@ DECLARE
 
 	, @RATE_INTEREST_CURRENT VARCHAR(32) = 'Tasa de interes corriente'
 	, @RATE_INTEREST_MORATOR VARCHAR(16) = 'intereses moratorios'
+
+	, @RENEWAL VARCHAR(16) = 'Renovacion'
 
 DECLARE @InputMovement TABLE(
 	Sec INT IDENTITY(1,1)
@@ -350,6 +352,13 @@ DECLARE @TempInterestMoratorMovement TABLE (
     , NewAccruedInterestMorator MONEY
 )
 
+-- Temp new physical card
+DECLARE @TempNewPhysicalCard TABLE (
+	Sec INT IDENTITY(1,1)
+	, IdCreditCardAccount INT
+	, IdInvalidationMotive INT
+	, Code VARCHAR(16)
+)
 -- Loading xml into @xmlData variable
 SET @xmlData = (
 	SELECT *
@@ -921,77 +930,9 @@ BEGIN
 					SET @QWithdrawals = @QWithdrawals + 1
 					SET @TotalDebits = @TotalDebits + @Amount
 				END
-				-- For new TF additional account
-				IF @MovementName = @MOVEMENT_TYPE_RECOVERY_LOST 
-				OR @MovementName = @MOVEMENT_TYPE_RECOVERY_THEFT
-					BEGIN
-						SET @NewYear = DATEPART(YEAR, DATEADD(YEAR, 1, @ActualDate));
-						SET @NewMonth = DATEPART(MONTH, @ActualDate);
-						SET @NewCVV = CAST((RAND() * 9000) + 1000 AS INT);
-						SET @MonetaryAmountPC = dbo.FNGetMonetaryAmount(@AccountTypeId
-																		, @REPLACEMENT_FEE_CTA_RULE)
-						SET @TotalDebits = @TotalDebits + @MonetaryAmountPC
-					END
-				IF @MovementName = @MOVEMENT_TYPE_RENEWAL_TF
-					BEGIN
-						SET @NewYear = DATEPART(YEAR, DATEADD(YEAR, 1, @ActualDate));
-						SET @NewMonth = DATEPART(MONTH, @ActualDate);
-						SET @NewCVV = CAST((RAND() * 9000) + 1000 AS INT);
-						SET @MonetaryAmountPC = dbo.FNGetMonetaryAmount(@AccountTypeId
-																		, @RENEWAL_FEE_CTA_RULE)
-						SET @TotalDebits = @TotalDebits + @MonetaryAmountPC
-					END
-			END
-
-			-- For new TF Master account
-			IF @MovementName = @MOVEMENT_TYPE_RECOVERY_LOST 
-				OR @MovementName = @MOVEMENT_TYPE_RECOVERY_THEFT
-					BEGIN
-						SET @NewYear = DATEPART(YEAR, DATEADD(YEAR, 1, @ActualDate));
-						SET @NewMonth = DATEPART(MONTH, @ActualDate);
-						SET @NewCVV = CAST((RAND() * 9000) + 1000 AS INT);
-						SET @MonetaryAmountPC = dbo.FNGetMonetaryAmount(@AccountTypeId
-																		, @REPLACEMENT_FEE_CTM_RULE)
-						SET @TotalDebits = @TotalDebits + @MonetaryAmountPC
-					END
-				IF @MovementName = @MOVEMENT_TYPE_RENEWAL_TF
-					BEGIN
-						SET @NewYear = DATEPART(YEAR, DATEADD(YEAR, 1, @ActualDate));
-						SET @NewMonth = DATEPART(MONTH, @ActualDate);
-						SET @NewCVV = CAST((RAND() * 9000) + 1000 AS INT);
-						SET @MonetaryAmountPC = dbo.FNGetMonetaryAmount(@AccountTypeId
-																		, @RENEWAL_FEE_CTM_RULE)
-						SET @TotalDebits = @TotalDebits + @MonetaryAmountPC
 			END
 			
-			--Insert into temp tables
-				IF @NewTFCode != ''
-				BEGIN
-					INSERT INTO dbo.PhysicalCard(
-						IdCreditCardAccount
-						, IdInvalidationMotive
-						, Code
-						, ExpirationYear
-						, ExpirationMonth
-						, CVV
-						, CreationDate
-					)
-					VALUES(
-						@IdCreditCardAccount
-						, @InvalidationMotiveId
-						, @NewTFCode
-						, @ExpirationYear
-						, @ExpirationMonth
-						, @NewCVV
-						, @ActualDate
-					)
-					UPDATE PC WITH (ROWLOCK)
-					SET PC.IdInvalidationMotive = @InvalidationMotiveId
-						, PC.InvalidationDate = @ActualDate
-					FROM dbo.PhysicalCard PC
-					WHERE PC.Code = @CodeTF
-				END
-				-- Suspecious movement insertion
+			-- Suspecious movement insertion
 
 				IF EXISTS(SELECT 1 FROM dbo.PhysicalCard PC
 					WHERE PC.Code = @CodeTF
@@ -1014,6 +955,7 @@ BEGIN
 						@Reference
 						)
 					END;
+
 				--Movements insertion
 				INSERT INTO @TempMovement(
 					IdMasterAccount
@@ -1037,9 +979,45 @@ BEGIN
 					, @Reference
 					, @NewBalance
 				)
-				
+
 				DECLARE @LastId INT = SCOPE_IDENTITY();
-				
+								-- Clear table
+				DELETE @TempNewPhysicalCard
+				-- Adding physical card to tf processing
+				IF  @DescriptionMovement = 'Recuperacion por perdida'
+				BEGIN
+					INSERT INTO @TempNewPhysicalCard (
+						IdCreditCardAccount
+						, IdInvalidationMotive
+						, Code
+					)
+					VALUES (
+						@IdCreditCardAccount
+						,  (SELECT IM.Id
+							FROM dbo.InvalidationMotive IM
+							WHERE IM.Name = 'Perdida')
+						, @TFCode
+
+					)
+				END
+
+				IF  @DescriptionMovement = 'Recuperacion por robo'
+				BEGIN
+					INSERT INTO @TempNewPhysicalCard (
+						IdCreditCardAccount
+						, IdInvalidationMotive
+						, Code
+					)
+					VALUES (
+						@IdCreditCardAccount
+						,  (SELECT IM.Id
+							FROM dbo.InvalidationMotive IM
+							WHERE IM.Name = 'Robo')
+						, @TFCode
+
+					)
+				END
+
 				-- UPDATE PROCESS
 				SET @Balance = dbo.FNCalculateNewBalance(@Amount, @Action, @Balance)
 
@@ -1589,13 +1567,89 @@ BEGIN
 				, MA.AccruedPenaultyInterest = 0
 			FROM @TempMasterAccount MA
 			WHERE MA.IdCreditCardAccount = @IdMasterAccount
-		
-		
-
 		SET @ActualIndex = @ActualIndex + 1
 	END
 
+	-- Physical card renovation
+	SELECT @IdInvalidationMotive = IM.Id
+			FROM dbo.InvalidationMotive IM
+			WHERE IM.Name = @RENEWAL
+	--
+	INSERT INTO @TempNewPhysicalCard (
+		IdCreditCardAccount
+		, IdInvalidationMovtive
+		, Code
+	)
+	SELECT
+		IdCreditCardAccount
+		, @IdInvalidationMotive 
+		, Code
+	FROM dbo.PhysicalCard PC
+	WHERE PC.ExpirationYear = DATEPART(YEAR, @ActualDate)
+	AND PC.ExpirationMonth = DATEPART(MONTH, @ActualDate)
+	AND @ActualDate = EOMONTH(@ActualDate)
+
 	
+	--Movimientos por renovacion
+	SELECT
+		 @ActualIndex = MIN(TPC.Sec)
+		 , @LastIndex = MAX(TPC.Sec)
+	FROM @TempNewPhysicalCard
+	WHILE @ActualIndex <= @LastIndex
+	BEGIN
+		SELECT
+			@IdCreditCardAccount = TPC.IdCreditCardAccount
+			, @CardCode = TPC.Code
+		FROM @TempNewPhysicalCard TPC
+		WHERE TPC.IdInvalidationMotive = @IdInvalidationMotive
+		
+		SET @IdMasterAccount = 	dbo.FNGetIdMasterAccount(NPC.IdCreditCardAccount)
+		SELECT TOP 1 @IdAccountStament = S.Id
+				FROM dbo.AccountState S
+				WHERE S.IdMasterAccount = @IdMasterAccount
+				ORDER BY BillingPeriod DESC
+		
+		--Get Physical card, Get Expiration date
+			SELECT
+				@IdPhysicalCard = PC.Id	
+			FROM dbo.PhysicalCard PC
+			WHERE PC.Code = @CardCode
+
+		SELECT
+			@IdAccountType = MA.IdAccountType
+			, @Balance = MA.Balance
+		FROM dbo.MasterAccount MA
+		WHERE MA.IdCreditCardAccount = @IdCreditCardAccount
+		SET @Amount = dbo.FNGetMonetaryAmount(@IdAccountType
+								, @MOVEMENT_TYPE_RENEWAL_TF)
+		SET @NewBalance = dbo.FNCalculateNewBalance(@Amount, 'Debito', @Balance)
+		INSERT INTO @TempMovement(
+			IdMasterAccount
+			, IdMovementType
+			, IdAccountStatement
+			, IdPhysicalCard
+			, [Date]
+			, Amount
+			, [Description]
+			, [Reference]
+			, NewBalance
+		)
+		SELECT
+			@IdMasterAccount
+			, dbo.FNGetMovementTypeId(@MOVEMENT_TYPE_RENEWAL_TF)
+			, @IdAccountStament
+			, @IdPhysicalCard
+			, @ActualDate
+			, @Amount
+			, @RENEWAL_FEE_RULE
+			, @MOVEMENT_TYPE_RENEWAL_TF
+			, @NewBalance
+		FROM @TempNewPhysicalCard NPC
+		WHERE NPC.IdInvalidationMotive = @IdInvalidationMotive
+	END	
+
+
+	-- Masive process to insert into database
 	SELECT
 		 @ActualIndex = MIN(MA.IdMasterAccount)
 		 , @LastIndex = MAX(MA.IdMasterAccount)
@@ -1642,6 +1696,8 @@ BEGIN
 			WHERE TMA.IdMasterAccount = @ActualIndex
 
 			BEGIN TRANSACTION TOperationsXMasterAccount
+
+			-- Insert into suspecious movements
 			INSERT INTO dbo.SuspiciousMovement
 			SELECT
 				TSM.IdMasterAccount
@@ -1653,6 +1709,7 @@ BEGIN
 			FROM @TempSuspiciousMovement TSM
 			WHERE TSM.IdMasterAccount = @ActualIndex
 
+			-- Insert into movements
 			INSERT INTO dbo.Movement
 			SELECT
 				TM.IdMasterAccount
@@ -1667,6 +1724,42 @@ BEGIN
 			FROM @TempMovement TM
 			WHERE TM.IdMasterAccount = @ActualIndex
 
+			-- Processing Physical cards
+			INSERT INTO dbo.PhysicalCard(
+				IdCreditCardAccount
+				, IdInvalidationMotive
+				, Code
+				, ExpirationYear
+				, ExpirationMonth
+				, CVV
+				, CreationDate
+			)
+			SELECT
+				NPC.IdCreditCardAccount
+				, NPC.IdInvalidationMotive
+				, NPC.Code
+				, DATEPART(DATEADD(YEAR, 1, @ActualDate))
+				, PC.ExpirationMonth
+				, CAST((RAND() * 899) + 100 AS INT)
+				, @ActualDate
+			FROM dbo.PhysicalCard PC
+			INNER JOIN @TempNewPhysicalCard AS NPC
+				ON PC.IdMasterAccount = NPC.IdCreditCardAccount
+			WHERE PC.IdMasterAccount = @ActualIndex
+				OR (SELECT 1
+					 FROM dbo.AdditionalAccount AA
+					 WHERE AA.IdCreditCardAccount = @IdCreditCardAccount) = 1
+			-- Update invalidation motive
+			UPDATE PC
+				SET IdInvalidationMotive = NPC.InvalidationMotive
+				, InvalidationDate = @ActualDate
+			FROM dbo.PhysicalCard PC
+			INNER JOIN @TempNewPhysicalCard AS NPC
+				ON PC.IdMasterAccount = NPC.IdCreditCardAccount
+			WHERE PC.IdMasterAccount = @ActualIndex
+				
+			
+			-- Insert current interests movements
 			INSERT INTO dbo.CurrentInterestMovement
 			SELECT
 				TIM.IdMasterAccount
@@ -1676,7 +1769,8 @@ BEGIN
 				, TIM.NewCurrentAccruedInterest
 			FROM @TempCurrentInterestMovement TIM
 			WHERE @IdMasterAccount = @ActualIndex
-
+			
+			-- Insert interests morator movements
 			INSERT INTO dbo.InterestMoratorMovement
 			SELECT
 				TIM.IdMasterAccount
@@ -1686,7 +1780,8 @@ BEGIN
 				, TIM.NewCurrentAccruedInterest
 			FROM @TempInterestMoratorMovement TIM
 			WHERE @IdMasterAccount = @ActualIndex
-
+			
+			-- Update Account Sub-Statement
 			UPDATE SS
 				SET
 					TotalPurchases = @TotalPurchases
@@ -1698,7 +1793,8 @@ BEGIN
 					, QATMOperations = @QATMOperations
 				FROM dbo.SubAccountStatate SS
 				WHERE SS.IdSubAccountState = @IdSubAccountState
-			
+				
+			-- Update Account Statement
 			UPDATE S
 				SET 
 				TotalPurchases = @TotalPurchases 
@@ -1717,7 +1813,8 @@ BEGIN
 					, QCredits = @QCredits
 			FROM dbo.AccountState S
 			WHERE S.IdAccountState = @IdAccountStament
-
+			
+			-- Update Master Account 
 			UPDATE MA
 				SET
 					Balance = @NewBalance
@@ -1728,7 +1825,10 @@ BEGIN
 
 			SET @ActualIndex = @ActualIndex + 1
 			COMMIT TRANSACTION TOperationsXMasterAccount
+
+		-- End try
 		END TRY
+		-- Begin catch 
 		BEGIN CATCH
 			IF @@TRANCOUNT > 0
 			BEGIN
@@ -1745,6 +1845,7 @@ BEGIN
 				GETDATE()
 			);
 		END CATCH
+		-- End catch
 		SET NOCOUNT OFF;
 	END
 
