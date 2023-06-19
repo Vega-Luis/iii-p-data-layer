@@ -1757,6 +1757,13 @@ BEGIN
 			INNER JOIN @TempNewPhysicalCard AS NPC
 				ON PC.IdMasterAccount = NPC.IdCreditCardAccount
 			WHERE PC.IdMasterAccount = @ActualIndex
+
+			-- Update if new tf is used
+			UPDATE NTF WITH (ROWLOCK)
+				SET Usado = 1
+			FROM dbo.NewPhysicalCard NTF
+			INNER JOIN @TempNewPhysicalCard AS NPC
+				ON NPC.Code = NTF.Code
 				
 			
 			-- Insert current interests movements
